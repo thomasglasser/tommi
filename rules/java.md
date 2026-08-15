@@ -6,7 +6,9 @@
 
 ## 2. Language Features & APIs
 * **Avoid Streams in Hot Paths**: Avoid using the Java Streams API (`.stream().filter()...`), particularly in frequently executed code or per-tick loops. Use direct for-loops or FastUtil iterators.
-* **No `var` Keyword**: Do NOT use `var`. Always declare explicit types for clarity and reviewability.
-* **No Static Imports**: Always import classes explicitly and call static methods with class qualification (e.g., `Collections.emptyList()` rather than `emptyList()`).
 * **Generics**: Avoid raw types. Use `<?>` or properly bounded wildcards when the exact type parameter is not constrained.
-* **Check Effect Pattern**: NEVER call `entity.hasEffect(Effect)` followed by `entity.getEffect(Effect)`. ALWAYS fetch the `MobEffectInstance` into a variable and check for `!= null`.
+* * **Javadocs**:
+  * Use `///` exclusively for single-line javadocs. Use `//` for inline implementation notes (e.g., `// TODO`).
+  * Class javadocs are expected on APIs and core abstractions, but implementation details (`impl`) do not need them unless necessary.
+  * Place separate sentences on separate lines within javadocs.
+  * Place javadocs on the methods/classes themselves, not on registry entries.
