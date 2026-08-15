@@ -1,4 +1,4 @@
-# T.O.M.M.I. (Thomas's Opinionated Minecraft/Modding Inspector) 🤖
+# T.O.M.M.I. (Tommy's Online Minecraft Modding Intelligence) 🤖
 
 **T.O.M.M.I.** is an autonomous, opinionated AI code reviewer and feedback learner for GitHub Pull Requests. It automatically inspects PR diffs against strict coding standards, architectural rules, side-safety constraints, and performance guidelines, while continuously learning and refining its rulebase from maintainer feedback.
 
