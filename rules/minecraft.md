@@ -23,4 +23,6 @@
 * **Avoid "Tool" for Non-Tools**: Reserve the word "tool" strictly for actual tools (pickaxes, axes, shovels). Do NOT use it for miscellaneous, throwable, or magical items.
 
 ## 5. APIs
+
+* **Mob Effect Comparisons**: Do NOT flag explicit or non-standard comparisons involving `MobEffect`, `MobEffectInstance`, or `Holder<MobEffect>` as redundant; Mob Effect matching has quirks requiring specific comparison logic to remain accurate.
 * **Check Effect Pattern**: NEVER call `entity.hasEffect(Effect)` followed by `entity.getEffect(Effect)`. ALWAYS fetch the `MobEffectInstance` into a variable and check for `!= null`.
