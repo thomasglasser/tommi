@@ -8,6 +8,7 @@ from google.genai import types
 from src.config import TommiConfig
 from src.diff_parser import parse_unified_diff, ParsedDiff
 from src.rules_loader import load_all_rules, LoadedRules
+from src.models_resolver import resolve_model_name
 
 logger = logging.getLogger("tommi.reviewer")
 
@@ -41,15 +42,16 @@ class TommiReviewer:
 
         parsed_diff = parse_unified_diff(diff_text)
         rules = load_all_rules()
+        model_name = resolve_model_name(self.client, self.config.model_name)
 
         logger.info(f"Loaded rules ({len(rules.base_rules)} base modules, {len(rules.local_rules)} local files).")
-        logger.info(f"Running Gemini review with model '{self.config.model_name}'...")
+        logger.info(f"Running Gemini review with model '{model_name}'...")
 
         prompt = self._build_review_prompt(pr_title, pr_body, diff_text, rules)
 
         try:
             response = self.client.models.generate_content(
-                model=self.config.model_name,
+                model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.15,

@@ -11,11 +11,8 @@ class TestConfig(unittest.TestCase):
         "PR_NUMBER": "42",
         "COMMENT_ID": "1001",
         "COMMENT_BODY": "/tommi review",
-        "MODEL_NAME": "gemini-3.7-flash",
-        "STRICTNESS": "strict",
-        "TOMMI_REPO": "thomasglasser/tommi"
     })
-    def test_valid_config_from_env(self):
+    def test_valid_config_from_env_defaults(self):
         cfg = TommiConfig.from_env()
         self.assertEqual(cfg.github_token, "ghp_test123")
         self.assertEqual(cfg.gemini_api_key, "gemini_test456")
@@ -23,8 +20,8 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.pr_number, 42)
         self.assertEqual(cfg.comment_id, 1001)
         self.assertEqual(cfg.comment_body, "/tommi review")
-        self.assertEqual(cfg.model_name, "gemini-3.7-flash")
-        self.assertEqual(cfg.strictness, "strict")
+        self.assertEqual(cfg.model_name, "auto")
+        self.assertEqual(cfg.strictness, "standard")
         self.assertEqual(cfg.tommi_repo, "thomasglasser/tommi")
 
     @patch.dict(os.environ, {}, clear=True)

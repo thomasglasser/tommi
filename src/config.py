@@ -11,7 +11,7 @@ class TommiConfig:
     pr_number: int
     comment_id: Optional[int] = None
     comment_body: str = ""
-    model_name: str = "gemini-3.7-flash"
+    model_name: str = "auto"
     strictness: str = "standard"  # standard, strict, style-only, bugs-only
     tommi_repo: str = "thomasglasser/tommi"
 
@@ -35,7 +35,7 @@ class TommiConfig:
         comment_id = int(comment_id_str) if comment_id_str.isdigit() else None
         comment_body = os.environ.get("COMMENT_BODY", "").strip()
 
-        model_name = os.environ.get("MODEL_NAME", "gemini-3.7-flash").strip()
+        model_name = os.environ.get("MODEL_NAME", "auto").strip()
         strictness = os.environ.get("STRICTNESS", "standard").strip()
         tommi_repo = os.environ.get("TOMMI_REPO", "thomasglasser/tommi").strip()
 

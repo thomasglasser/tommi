@@ -8,6 +8,7 @@ from google.genai import types
 
 from src.config import TommiConfig
 from src.rules_loader import load_all_rules
+from src.models_resolver import resolve_model_name
 
 logger = logging.getLogger("tommi.learner")
 
@@ -31,6 +32,7 @@ class TommiLearner:
         """
         logger.info(f"Processing learning feedback for command '{command_type}'...")
         rules = load_all_rules()
+        model_name = resolve_model_name(self.client, self.config.model_name)
 
         # Build prompt for Gemini to determine the appropriate rule change
         prompt = f"""
@@ -68,7 +70,7 @@ Thomas has provided review feedback / correction on a Pull Request.
 """
 
         response = self.client.models.generate_content(
-            model=self.config.model_name,
+            model=model_name,
             contents=prompt,
             config=types.GenerateContentConfig(
                 temperature=0.1,
