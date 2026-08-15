@@ -21,7 +21,7 @@ class TestRulesLoader(unittest.TestCase):
 
             self.assertIn("core", loaded.base_rules)
             self.assertIn("java", loaded.base_rules)
-            self.assertIn("neoforge", loaded.base_rules)
+            self.assertIn("minecraft", loaded.base_rules)
             self.assertIn("performance", loaded.base_rules)
             self.assertIn("AGENTS.md", loaded.local_rules)
             self.assertIn("TOMMI.md", loaded.local_rules)

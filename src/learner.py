@@ -58,10 +58,10 @@ Thomas has provided review feedback / correction on a Pull Request.
 
 ### INSTRUCTIONS:
 1. Analyze Thomas's feedback to understand the rule refinement, false-positive prevention, or new standard he wants.
-2. Select the most appropriate rule file to modify among: `rules/core.md`, `rules/java.md`, `rules/neoforge.md`, `rules/performance.md` (or propose a new one if necessary).
+2. Select the most appropriate rule file to modify among: `rules/core.md`, `rules/java.md`, `rules/minecraft.md`, `rules/performance.md` (or propose a new one if necessary).
 3. Formulate the precise rule text using Thomas's strict, imperative style (**MUST**, **NEVER**, **ALWAYS**, concise bullet points).
 4. Return a JSON object with:
-   - `target_file`: e.g. "rules/core.md", "rules/java.md", "rules/neoforge.md", or "rules/performance.md".
+   - `target_file`: e.g. "rules/core.md", "rules/java.md", "rules/minecraft.md", or "rules/performance.md".
    - `update_type`: "append" (adds a new bullet point to a section) or "replace" or "new_section".
    - `section_header`: The section under which to add the rule (e.g., "## 1. Naming & Terminology" or "## 2. Language Features & APIs").
    - `rule_markdown`: The exact bullet point(s) to add or update.

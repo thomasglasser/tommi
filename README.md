@@ -75,7 +75,7 @@ The central rules are organized under the `rules/` directory:
 
 - [`rules/core.md`](./rules/core.md): Naming conventions, class layout, control flow, DRY, and review etiquette.
 - [`rules/java.md`](./rules/java.md): FastUtil collections, immutability, stream avoidance, generics, no `var`.
-- [`rules/neoforge.md`](./rules/neoforge.md): Client/Server separation, data attachments, tags, constants, GUI rendering.
+- [`rules/minecraft.md`](./rules/minecraft.md): Client/Server separation, data attachments, tags, constants, GUI rendering.
 - [`rules/performance.md`](./rules/performance.md): Zero object allocations in tick loops, `BlockPos.Mutable`, throttling.
 
 ### Project-Specific Rules
