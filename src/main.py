@@ -1,0 +1,111 @@
+import logging
+import sys
+from github import Github, Auth
+
+from src.config import TommiConfig
+from src.commenter import GitHubCommenter
+from src.reviewer import TommiReviewer, QuotaExceededException
+from src.learner import TommiLearner
+
+# Setup logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+logger = logging.getLogger("tommi")
+
+
+def main():
+    try:
+        config = TommiConfig.from_env()
+    except Exception as e:
+        logger.error(f"Configuration error: {e}")
+        sys.exit(1)
+
+    auth = Auth.Token(config.github_token)
+    g = Github(auth=auth)
+    commenter = GitHubCommenter(
+        github_client=g,
+        repo_name=config.github_repository,
+        pr_number=config.pr_number,
+        comment_id=config.comment_id,
+    )
+
+    # 1. Acknowledge the request with 👀 reaction
+    commenter.add_reaction("eyes")
+
+    comment_body = config.comment_body.strip()
+    pr = commenter.pr
+
+    # 2. Determine command action
+    try:
+        if "/tommi learn" in comment_body or "/tommi false-positive" in comment_body:
+            # Learning / Feedback Mode
+            if "/tommi learn" in comment_body:
+                cmd_type = "learn"
+                feedback_text = comment_body.split("/tommi learn", 1)[1].strip()
+            else:
+                cmd_type = "false-positive"
+                feedback_text = comment_body.split("/tommi false-positive", 1)[1].strip()
+
+            if not feedback_text:
+                commenter.post_issue_comment(
+                    "⚠️ Please provide feedback or a rule description after `/tommi learn` or `/tommi false-positive`."
+                )
+                return
+
+            reviewer_instance = TommiReviewer(config)
+            diff_text = reviewer_instance.fetch_pr_diff(pr.url)
+
+            learner = TommiLearner(config=config, github_client=g)
+            result = learner.process_feedback(
+                command_type=cmd_type,
+                feedback_text=feedback_text,
+                pr_title=pr.title,
+                pr_diff=diff_text,
+            )
+
+            pr_url = result.get("pr_url")
+            summary = result.get("learning_plan", {}).get("summary", "Rule update")
+
+            response_msg = (
+                f"🎓 **T.O.M.M.I. Feedback Processed!**\n\n"
+                f"I've synthesized this feedback (*{summary}*) and opened a rule proposal Pull Request on `thomasglasser/tommi`:\n"
+                f"👉 **[View Rule Proposal PR]({pr_url})**\n\n"
+                f"Once merged, this rule will automatically apply to all future reviews."
+            )
+            commenter.post_issue_comment(response_msg)
+            commenter.add_reaction("hooray")
+            logger.info("Successfully processed learning feedback.")
+
+        elif "/tommi review" in comment_body or "/review" in comment_body:
+            # Code Review Mode
+            reviewer = TommiReviewer(config=config)
+            comments = reviewer.review_pr(
+                pr_title=pr.title,
+                pr_body=pr.body or "",
+                pr_url=pr.url,
+            )
+
+            if not comments:
+                logger.info("No style violations or issues found.")
+                commenter.add_reaction("rocket")
+                commenter.post_issue_comment("✅ **T.O.M.M.I. Review**: Looks good! No rule violations or obvious bugs detected.")
+            else:
+                logger.info(f"Posting {len(comments)} review comments...")
+                commenter.post_review_comments(comments)
+                commenter.add_reaction("rocket")
+
+        else:
+            logger.info("No recognizable TOMMI command in comment body.")
+
+    except QuotaExceededException as qe:
+        logger.warning(f"Quota error: {qe}")
+        quota_msg = "😴 **T.O.M.M.I. is resting:** I've run out of AI API quota for today. Please try again tomorrow."
+        commenter.post_issue_comment(quota_msg)
+        commenter.add_reaction("confused")
+    except Exception as e:
+        logger.error(f"Error during execution: {e}", exc_info=True)
+        commenter.add_reaction("confused")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,57 @@
+name: 'T.O.M.M.I. AI Code Reviewer'
+description: "Thomas's Opinionated Minecraft/Modding Inspector - Autonomous Code Reviewer & Feedback Learner"
+author: 'Thomas Glasser'
+
+branding:
+  icon: 'code'
+  color: 'blue'
+
+inputs:
+  github-token:
+    description: 'GitHub Token or App Token with permissions for pull-requests:write, issues:write, and contents:write'
+    required: true
+  gemini-api-key:
+    description: 'Google Gemini API Key'
+    required: true
+  model:
+    description: 'Gemini model to use for analysis (e.g. gemini-2.5-flash, gemini-2.5-pro)'
+    required: false
+    default: 'gemini-2.5-flash'
+  strictness:
+    description: 'Review strictness mode (standard, strict, style-only, bugs-only)'
+    required: false
+    default: 'standard'
+  tommi-repo:
+    description: 'Repository name where central TOMMI rules are hosted'
+    required: false
+    default: 'thomasglasser/tommi'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install Dependencies
+      shell: bash
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r ${{ github.action_path }}/requirements.txt
+
+    - name: Run TOMMI Engine
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        MODEL_NAME: ${{ inputs.model }}
+        STRICTNESS: ${{ inputs.strictness }}
+        TOMMI_REPO: ${{ inputs.tommi-repo }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.issue.number }}
+        COMMENT_ID: ${{ github.event.comment.id }}
+        COMMENT_BODY: ${{ github.event.comment.body }}
+        PYTHONPATH: ${{ github.action_path }}
+      run: |
+        python ${{ github.action_path }}/src/main.py
