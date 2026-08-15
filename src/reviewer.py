@@ -25,7 +25,7 @@ class TommiReviewer:
             "Accept": "application/vnd.github.v3.diff",
         }
         if self.auth_token:
-            headers["Authorization"] = f"token {self.auth_token}"
+            headers["Authorization"] = f"Bearer {self.auth_token}"
 
         resp = requests.get(pr_url, headers=headers)
         if resp.status_code != 200:

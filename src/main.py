@@ -26,6 +26,7 @@ def main():
         private_key=config.private_key,
     )
 
+    target_token = auth_manager.get_token_for_repo(config.github_repository)
     target_g = auth_manager.get_client_for_repo(config.github_repository)
     commenter = GitHubCommenter(
         github_client=target_g,
@@ -57,7 +58,7 @@ def main():
                 )
                 return
 
-            reviewer_instance = TommiReviewer(config)
+            reviewer_instance = TommiReviewer(config=config, auth_token=target_token)
             diff_text = reviewer_instance.fetch_pr_diff(pr.url)
 
             # Build rich thread context if replying to a code review comment
@@ -100,7 +101,7 @@ def main():
 
         elif "/tommi review" in comment_body or "/review" in comment_body:
             # Code Review Mode
-            reviewer = TommiReviewer(config=config)
+            reviewer = TommiReviewer(config=config, auth_token=target_token)
             comments = reviewer.review_pr(
                 pr_title=pr.title,
                 pr_body=pr.body or "",

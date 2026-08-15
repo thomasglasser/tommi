@@ -25,23 +25,29 @@ class GitHubAuthManager:
             except Exception as e:
                 logger.warning(f"Failed to initialize GitHub App Auth: {e}")
 
-    def get_client_for_repo(self, repo_full_name: str) -> Github:
+    def get_token_for_repo(self, repo_full_name: str) -> Optional[str]:
         """
-        Returns an authenticated Github client for the given repository.
-        If GitHub App credentials are available, dynamically generates an installation token for that repo.
-        Otherwise, falls back to the provided token.
+        Returns an authenticated installation access token string for the given repository,
+        or the fallback token if configured.
         """
         if self.integration and "/" in repo_full_name:
             owner, repo = repo_full_name.split("/", 1)
             try:
                 installation = self.integration.get_repo_installation(owner, repo)
-                client = installation.get_github_for_installation()
-                logger.info(f"Obtained installation client for repository '{repo_full_name}'")
-                return client
+                access_token = self.integration.get_access_token(installation.id)
+                logger.info(f"Generated installation token for repository '{repo_full_name}'")
+                return access_token.token
             except Exception as e:
-                logger.warning(f"Could not get App installation for '{repo_full_name}': {e}. Falling back to default token.")
+                logger.warning(f"Could not get App installation token for '{repo_full_name}': {e}. Falling back to default token.")
 
-        if self.token:
-            return Github(auth=Auth.Token(self.token))
+        return self.token
+
+    def get_client_for_repo(self, repo_full_name: str) -> Github:
+        """
+        Returns an authenticated Github client for the given repository.
+        """
+        token = self.get_token_for_repo(repo_full_name)
+        if token:
+            return Github(auth=Auth.Token(token))
 
         raise ValueError(f"No valid GitHub authentication available for repository '{repo_full_name}'.")
