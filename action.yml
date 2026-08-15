@@ -66,6 +66,8 @@ runs:
         IN_REPLY_TO_ID: ${{ github.event.comment.in_reply_to_id || '' }}
         DIFF_HUNK: ${{ github.event.comment.diff_hunk || '' }}
         FILE_PATH: ${{ github.event.comment.path || '' }}
+        EVENT_NAME: ${{ github.event_name }}
+        IS_MERGED: ${{ github.event.pull_request.merged || false }}
         PYTHONPATH: ${{ github.action_path }}
       run: |
         python ${{ github.action_path }}/src/main.py

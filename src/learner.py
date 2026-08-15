@@ -1,8 +1,9 @@
 import json
 import logging
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from github import Github, GithubException
+from github.PullRequest import PullRequest
 from google import genai
 from google.genai import types
 
@@ -19,6 +20,176 @@ class TommiLearner:
         self.g = github_client
         self.tommi_g = tommi_client or github_client
         self.client = genai.Client(api_key=config.gemini_api_key)
+
+    def learn_from_merged_pr(
+        self,
+        pr: PullRequest,
+        pr_diff: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Analyzes human review comments made during a merged PR, synthesizes any new coding rules/patterns,
+        and opens a rule proposal PR on thomasglasser/tommi if actionable lessons are discovered.
+        """
+        logger.info(f"Analyzing review comments on merged PR #{pr.number} for rule learning...")
+
+        # 1. Collect all human comments from review comments, reviews, and issue comments
+        raw_comments: List[Dict[str, Any]] = []
+
+        # Inline diff review comments
+        try:
+            for rc in pr.get_review_comments():
+                user_login = rc.user.login if rc.user else ""
+                user_type = getattr(rc.user, "type", "")
+                if user_type == "Bot" or user_login.endswith("[bot]") or user_login in ("t-o-m-m-i-ai-reviewer", "github-actions"):
+                    continue
+                body = (rc.body or "").strip()
+                if not body or body.startswith("/tommi"):
+                    continue
+                raw_comments.append({
+                    "author": user_login,
+                    "type": "inline_review_comment",
+                    "path": rc.path,
+                    "line": rc.line or getattr(rc, "original_line", None),
+                    "diff_hunk": getattr(rc, "diff_hunk", ""),
+                    "body": body
+                })
+        except Exception as e:
+            logger.warning(f"Failed to fetch review comments: {e}")
+
+        # Submitted reviews (top-level review summaries)
+        try:
+            for rev in pr.get_reviews():
+                user_login = rev.user.login if rev.user else ""
+                user_type = getattr(rev.user, "type", "")
+                if user_type == "Bot" or user_login.endswith("[bot]") or user_login in ("t-o-m-m-i-ai-reviewer", "github-actions"):
+                    continue
+                body = (rev.body or "").strip()
+                if not body or body.startswith("/tommi"):
+                    continue
+                raw_comments.append({
+                    "author": user_login,
+                    "type": "review_summary",
+                    "state": rev.state,
+                    "body": body
+                })
+        except Exception as e:
+            logger.warning(f"Failed to fetch reviews: {e}")
+
+        # PR conversation comments
+        try:
+            for ic in pr.get_issue_comments():
+                user_login = ic.user.login if ic.user else ""
+                user_type = getattr(ic.user, "type", "")
+                if user_type == "Bot" or user_login.endswith("[bot]") or user_login in ("t-o-m-m-i-ai-reviewer", "github-actions"):
+                    continue
+                body = (ic.body or "").strip()
+                if not body or body.startswith("/tommi"):
+                    continue
+                raw_comments.append({
+                    "author": user_login,
+                    "type": "conversation_comment",
+                    "body": body
+                })
+        except Exception as e:
+            logger.warning(f"Failed to fetch issue comments: {e}")
+
+        if not raw_comments:
+            logger.info(f"No maintainer review comments found on merged PR #{pr.number}. Nothing to learn.")
+            return None
+
+        logger.info(f"Found {len(raw_comments)} maintainer review comment(s) to analyze.")
+
+        # Format comments for Gemini
+        formatted_comments = []
+        for c in raw_comments:
+            if c["type"] == "inline_review_comment":
+                formatted_comments.append(
+                    f"- **Author @{c['author']} on `{c['path']}:{c.get('line', '?')}`**:\n"
+                    f"  Diff context:\n```\n{c.get('diff_hunk', '')[:300]}\n```\n"
+                    f"  Comment: \"{c['body']}\""
+                )
+            else:
+                formatted_comments.append(
+                    f"- **Author @{c['author']} ({c['type']})**:\n"
+                    f"  Comment: \"{c['body']}\""
+                )
+        comments_text = "\n\n".join(formatted_comments)
+
+        rules = load_all_rules()
+        model_name = resolve_model_name(self.client, self.config.model_name)
+
+        prompt = f"""
+You are analyzing code review feedback made by repository maintainers (such as Thomas Glasser) on a newly MERGED Pull Request.
+Your goal is to identify if the maintainers taught or enforced any reusable coding standards, Minecraft/NeoForge patterns, performance rules, architecture conventions, or review guidelines that should be added to T.O.M.M.I.'s central rule set.
+
+### EXISTING RULES:
+{rules.format_for_prompt()}
+
+### MERGED PR CONTEXT:
+- Repository: {self.config.github_repository}
+- PR: #{pr.number} - {pr.title}
+- Description: {pr.body or 'None'}
+
+### MAINTAINER'S REVIEW COMMENTS:
+{comments_text}
+
+### MERGED PR DIFF SNIPPET:
+```diff
+{pr_diff[:4000]}
+```
+
+### INSTRUCTIONS:
+1. Examine the maintainer's review comments to see if any comment states a general, reusable coding standard, bug prevention technique, or preference (e.g. "Do not use X", "Always check Y", "FastUtil should be used here", etc.).
+2. Check if the feedback is ALREADY covered by the existing rules. If it is already covered or just conversational/PR-specific (e.g. "looks good", "thanks"), DO NOT propose a duplicate rule.
+3. If NO new rules or modifications are warranted, return:
+   {{"has_new_rules": false, "reason": "No new generalizable rules found in comments"}}
+4. If new or refined rules ARE discovered, return:
+   {{
+     "has_new_rules": true,
+     "target_file": "rules/minecraft.md",
+     "section_header": "## Appropriate Section Header",
+     "rule_markdown": "* **Rule Title**: Concise imperative rule specification.",
+     "summary": "1-sentence summary of the new/updated rule",
+     "rationale": "Detailed explanation citing the maintainer's comments and PR context",
+     "source_comments": ["Quote of comment 1", "Quote of comment 2"]
+   }}
+"""
+
+        response = self.client.models.generate_content(
+            model=model_name,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.1,
+                response_mime_type="application/json",
+            )
+        )
+
+        raw_json = response.text.strip()
+        if raw_json.startswith("```json"):
+            raw_json = raw_json[7:]
+        if raw_json.startswith("```"):
+            raw_json = raw_json[3:]
+        if raw_json.endswith("```"):
+            raw_json = raw_json[:-3]
+
+        try:
+            plan = json.loads(raw_json.strip())
+        except Exception as e:
+            logger.error(f"Failed to parse learning JSON from Gemini: {e}")
+            return None
+
+        if not plan.get("has_new_rules"):
+            logger.info(f"No new actionable rules found from merged PR #{pr.number} comments: {plan.get('reason', 'N/A')}")
+            return None
+
+        logger.info(f"Learned rule proposal from merged PR #{pr.number}: {plan.get('summary')}")
+        source_summary = "\n".join([f"> {s}" for s in plan.get("source_comments", [])]) or f"Review comments on merged PR #{pr.number}"
+        pr_url = self._create_rule_pr(plan, source_summary)
+
+        return {
+            "learning_plan": plan,
+            "pr_url": pr_url
+        }
 
     def process_feedback(
         self,

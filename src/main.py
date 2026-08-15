@@ -41,8 +41,30 @@ def main():
     comment_body = config.comment_body.strip()
     pr = commenter.pr
 
-    # 2. Determine command action
+    # 2. Determine action based on event and comment
     try:
+        if config.event_name == "pull_request" and config.is_merged:
+            # Post-Merge Review Learning Mode
+            logger.info(f"Triggered post-merge rule learning on PR #{config.pr_number} ({config.github_repository})")
+            reviewer_instance = TommiReviewer(config=config, auth_token=target_token)
+            diff_text = reviewer_instance.fetch_pr_diff(pr.url)
+
+            tommi_g = auth_manager.get_client_for_repo(config.tommi_repo)
+            learner = TommiLearner(config=config, github_client=target_g, tommi_client=tommi_g)
+            result = learner.learn_from_merged_pr(pr=pr, pr_diff=diff_text)
+
+            if result and result.get("pr_url"):
+                pr_url = result.get("pr_url")
+                summary = result.get("learning_plan", {}).get("summary", "Rule update")
+                response_msg = (
+                    f"🎓 **T.O.M.M.I. Post-Merge Learning**\n\n"
+                    f"I've analyzed maintainer review feedback from this merged PR (*{summary}*) and opened a rule proposal Pull Request on `thomasglasser/tommi`:\n"
+                    f"👉 **[View Rule Proposal PR]({pr_url})**\n\n"
+                    f"Once merged, this rule will automatically apply to all future reviews."
+                )
+                commenter.post_issue_comment(response_msg)
+            return
+
         if "/tommi learn" in comment_body or "/tommi false-positive" in comment_body:
             # Learning / Feedback Mode
             if "/tommi learn" in comment_body:

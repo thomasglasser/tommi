@@ -19,6 +19,8 @@ class TommiConfig:
     in_reply_to_id: Optional[int] = None
     diff_hunk: str = ""
     file_path: str = ""
+    event_name: str = ""
+    is_merged: bool = False
 
     @classmethod
     def from_env(cls) -> "TommiConfig":
@@ -48,6 +50,10 @@ class TommiConfig:
         diff_hunk = os.environ.get("DIFF_HUNK", "").strip()
         file_path = os.environ.get("FILE_PATH", "").strip()
 
+        event_name = os.environ.get("EVENT_NAME", "").strip()
+        is_merged_str = os.environ.get("IS_MERGED", "false").strip().lower()
+        is_merged = is_merged_str in ("true", "1", "yes")
+
         model_name = os.environ.get("MODEL_NAME", "auto").strip()
         strictness = os.environ.get("STRICTNESS", "standard").strip()
         tommi_repo = os.environ.get("TOMMI_REPO", "thomasglasser/tommi").strip()
@@ -67,4 +73,6 @@ class TommiConfig:
             in_reply_to_id=in_reply_to_id,
             diff_hunk=diff_hunk,
             file_path=file_path,
+            event_name=event_name,
+            is_merged=is_merged,
         )
