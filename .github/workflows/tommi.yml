@@ -3,11 +3,13 @@ name: T.O.M.M.I. AI Code Reviewer
 on:
   issue_comment:
     types: [created]
+  pull_request_review_comment:
+    types: [created]
 
 jobs:
   tommi:
-    # Trigger on PR comments containing /tommi
-    if: github.event.issue.pull_request && contains(github.event.comment.body, '/tommi')
+    # Trigger on PR comments or review thread comments containing /tommi
+    if: (github.event.issue.pull_request || github.event.pull_request) && contains(github.event.comment.body, '/tommi')
     runs-on: ubuntu-latest
     permissions:
       contents: write

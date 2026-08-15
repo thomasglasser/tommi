@@ -54,12 +54,28 @@ def main():
             reviewer_instance = TommiReviewer(config)
             diff_text = reviewer_instance.fetch_pr_diff(pr.url)
 
+            # Build rich thread context if replying to a code review comment
+            thread_context_parts = []
+            if config.file_path:
+                thread_context_parts.append(f"File: `{config.file_path}`")
+            if config.in_reply_to_id:
+                try:
+                    parent_comment = pr.get_comment(config.in_reply_to_id)
+                    thread_context_parts.append(f"Original Review Comment by {parent_comment.user.login}:\n\"{parent_comment.body}\"")
+                except Exception as e:
+                    logger.warning(f"Could not fetch parent review comment #{config.in_reply_to_id}: {e}")
+            if config.diff_hunk:
+                thread_context_parts.append(f"Diff Hunk:\n```diff\n{config.diff_hunk}\n```")
+
+            thread_context = "\n\n".join(thread_context_parts) if thread_context_parts else None
+
             learner = TommiLearner(config=config, github_client=g)
             result = learner.process_feedback(
                 command_type=cmd_type,
                 feedback_text=feedback_text,
                 pr_title=pr.title,
                 pr_diff=diff_text,
+                thread_context=thread_context,
             )
 
             pr_url = result.get("pr_url")
@@ -71,7 +87,7 @@ def main():
                 f"👉 **[View Rule Proposal PR]({pr_url})**\n\n"
                 f"Once merged, this rule will automatically apply to all future reviews."
             )
-            commenter.post_issue_comment(response_msg)
+            commenter.reply_to_comment(response_msg)
             commenter.add_reaction("hooray")
             logger.info("Successfully processed learning feedback.")
 

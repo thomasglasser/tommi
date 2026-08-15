@@ -93,3 +93,14 @@ class GitHubCommenter:
             self.pr.create_issue_comment(body)
         except Exception as e:
             logger.error(f"Failed to post issue comment: {e}")
+
+    def reply_to_comment(self, body: str) -> None:
+        """Replies directly in the review comment thread if applicable, otherwise posts a general comment."""
+        if self.comment_id:
+            try:
+                self.pr.create_review_comment_reply(self.comment_id, body)
+                logger.info(f"Replied in review comment thread #{self.comment_id}")
+                return
+            except Exception:
+                pass
+        self.post_issue_comment(body)

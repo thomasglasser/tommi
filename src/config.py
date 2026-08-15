@@ -14,6 +14,9 @@ class TommiConfig:
     model_name: str = "auto"
     strictness: str = "standard"  # standard, strict, style-only, bugs-only
     tommi_repo: str = "thomasglasser/tommi"
+    in_reply_to_id: Optional[int] = None
+    diff_hunk: str = ""
+    file_path: str = ""
 
     @classmethod
     def from_env(cls) -> "TommiConfig":
@@ -35,6 +38,11 @@ class TommiConfig:
         comment_id = int(comment_id_str) if comment_id_str.isdigit() else None
         comment_body = os.environ.get("COMMENT_BODY", "").strip()
 
+        in_reply_to_id_str = os.environ.get("IN_REPLY_TO_ID", "").strip()
+        in_reply_to_id = int(in_reply_to_id_str) if in_reply_to_id_str.isdigit() else None
+        diff_hunk = os.environ.get("DIFF_HUNK", "").strip()
+        file_path = os.environ.get("FILE_PATH", "").strip()
+
         model_name = os.environ.get("MODEL_NAME", "auto").strip()
         strictness = os.environ.get("STRICTNESS", "standard").strip()
         tommi_repo = os.environ.get("TOMMI_REPO", "thomasglasser/tommi").strip()
@@ -49,4 +57,7 @@ class TommiConfig:
             model_name=model_name,
             strictness=strictness,
             tommi_repo=tommi_repo,
+            in_reply_to_id=in_reply_to_id,
+            diff_hunk=diff_hunk,
+            file_path=file_path,
         )
