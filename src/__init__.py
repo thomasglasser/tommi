@@ -1,3 +1,3 @@
-"""T.O.M.M.I. - Thomas's Opinionated Minecraft/Modding Inspector"""
+"""T.O.M.M.I. - Tommy's Online Minecraft Modding Intelligence"""
 
 __version__ = "1.0.0"
