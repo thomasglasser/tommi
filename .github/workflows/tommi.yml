@@ -1,0 +1,32 @@
+name: T.O.M.M.I. AI Code Reviewer
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  tommi:
+    # Trigger on PR comments containing /tommi
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '/tommi')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Generate GitHub App Token
+        id: generate-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.TOMMI_APP_ID }}
+          private-key: ${{ secrets.TOMMI_PRIVATE_KEY }}
+
+      - name: Run T.O.M.M.I.
+        uses: ./
+        with:
+          github-token: ${{ steps.generate-token.outputs.token }}
+          gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
