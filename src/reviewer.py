@@ -14,16 +14,19 @@ logger = logging.getLogger("tommi.reviewer")
 
 
 class TommiReviewer:
-    def __init__(self, config: TommiConfig):
+    def __init__(self, config: TommiConfig, auth_token: Optional[str] = None):
         self.config = config
+        self.auth_token = auth_token or config.github_token
         self.client = genai.Client(api_key=config.gemini_api_key)
 
     def fetch_pr_diff(self, pr_url: str) -> str:
         """Fetches the raw diff of the PR using GitHub API."""
         headers = {
-            "Authorization": f"token {self.config.github_token}",
             "Accept": "application/vnd.github.v3.diff",
         }
+        if self.auth_token:
+            headers["Authorization"] = f"token {self.auth_token}"
+
         resp = requests.get(pr_url, headers=headers)
         if resp.status_code != 200:
             raise RuntimeError(f"Failed to fetch PR diff (HTTP {resp.status_code}): {resp.text}")

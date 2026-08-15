@@ -24,6 +24,19 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.strictness, "standard")
         self.assertEqual(cfg.tommi_repo, "thomasglasser/tommi")
 
+    @patch.dict(os.environ, {
+        "APP_ID": "123456",
+        "PRIVATE_KEY": "fake_pem_key",
+        "GEMINI_API_KEY": "gemini_test456",
+        "GITHUB_REPOSITORY": "thomasglasser/Mineraculous",
+        "PR_NUMBER": "42",
+    })
+    def test_valid_config_with_app_auth(self):
+        cfg = TommiConfig.from_env()
+        self.assertEqual(cfg.app_id, "123456")
+        self.assertEqual(cfg.private_key, "fake_pem_key")
+        self.assertIsNone(cfg.github_token)
+
     @patch.dict(os.environ, {}, clear=True)
     def test_missing_config_raises(self):
         with self.assertRaises(ValueError):

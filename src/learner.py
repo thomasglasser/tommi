@@ -14,9 +14,10 @@ logger = logging.getLogger("tommi.learner")
 
 
 class TommiLearner:
-    def __init__(self, config: TommiConfig, github_client: Github):
+    def __init__(self, config: TommiConfig, github_client: Github, tommi_client: Optional[Github] = None):
         self.config = config
         self.g = github_client
+        self.tommi_g = tommi_client or github_client
         self.client = genai.Client(api_key=config.gemini_api_key)
 
     def process_feedback(
@@ -104,7 +105,7 @@ Thomas has provided review feedback / correction on a Pull Request.
         logger.info(f"Opening PR on central repository '{tommi_repo_name}'...")
 
         try:
-            tommi_repo = self.g.get_repo(tommi_repo_name)
+            tommi_repo = self.tommi_g.get_repo(tommi_repo_name)
         except GithubException as e:
             logger.error(f"Failed to access TOMMI repo '{tommi_repo_name}': {e}")
             raise

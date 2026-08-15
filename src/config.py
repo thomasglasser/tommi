@@ -5,10 +5,12 @@ from typing import Optional
 
 @dataclass
 class TommiConfig:
-    github_token: str
     gemini_api_key: str
     github_repository: str
     pr_number: int
+    github_token: Optional[str] = None
+    app_id: Optional[str] = None
+    private_key: Optional[str] = None
     comment_id: Optional[int] = None
     comment_body: str = ""
     model_name: str = "auto"
@@ -20,13 +22,16 @@ class TommiConfig:
 
     @classmethod
     def from_env(cls) -> "TommiConfig":
-        github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+        github_token = os.environ.get("GITHUB_TOKEN", "").strip() or None
+        app_id = os.environ.get("APP_ID", "").strip() or None
+        private_key = os.environ.get("PRIVATE_KEY", "").strip() or None
+
         gemini_api_key = os.environ.get("GEMINI_API_KEY", "").strip()
         github_repository = os.environ.get("GITHUB_REPOSITORY", "").strip()
         pr_number_str = os.environ.get("PR_NUMBER", "").strip()
 
-        if not github_token:
-            raise ValueError("Missing GITHUB_TOKEN environment variable.")
+        if not github_token and not (app_id and private_key):
+            raise ValueError("Must provide either GITHUB_TOKEN or both APP_ID and PRIVATE_KEY.")
         if not gemini_api_key:
             raise ValueError("Missing GEMINI_API_KEY environment variable.")
         if not github_repository:
@@ -48,10 +53,12 @@ class TommiConfig:
         tommi_repo = os.environ.get("TOMMI_REPO", "thomasglasser/tommi").strip()
 
         return cls(
-            github_token=github_token,
             gemini_api_key=gemini_api_key,
             github_repository=github_repository,
             pr_number=int(pr_number_str),
+            github_token=github_token,
+            app_id=app_id,
+            private_key=private_key,
             comment_id=comment_id,
             comment_body=comment_body,
             model_name=model_name,

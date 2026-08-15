@@ -8,8 +8,17 @@ branding:
 
 inputs:
   github-token:
-    description: 'GitHub Token or App Token with permissions for pull-requests:write, issues:write, and contents:write'
-    required: true
+    description: 'GitHub Token with permissions for pull-requests:write, issues:write, and contents:write'
+    required: false
+    default: ''
+  app-id:
+    description: 'GitHub App ID for multi-repo installation access'
+    required: false
+    default: ''
+  private-key:
+    description: 'GitHub App Private Key (.pem format) for multi-repo installation access'
+    required: false
+    default: ''
   gemini-api-key:
     description: 'Google Gemini API Key'
     required: true
@@ -44,6 +53,8 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
+        APP_ID: ${{ inputs.app-id }}
+        PRIVATE_KEY: ${{ inputs.private-key }}
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
         MODEL_NAME: ${{ inputs.model }}
         STRICTNESS: ${{ inputs.strictness }}

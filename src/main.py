@@ -1,8 +1,9 @@
 import logging
 import sys
-from github import Github, Auth
+from github import Github
 
 from src.config import TommiConfig
+from src.github_auth import GitHubAuthManager
 from src.commenter import GitHubCommenter
 from src.reviewer import TommiReviewer, QuotaExceededException
 from src.learner import TommiLearner
@@ -19,10 +20,15 @@ def main():
         logger.error(f"Configuration error: {e}")
         sys.exit(1)
 
-    auth = Auth.Token(config.github_token)
-    g = Github(auth=auth)
+    auth_manager = GitHubAuthManager(
+        token=config.github_token,
+        app_id=config.app_id,
+        private_key=config.private_key,
+    )
+
+    target_g = auth_manager.get_client_for_repo(config.github_repository)
     commenter = GitHubCommenter(
-        github_client=g,
+        github_client=target_g,
         repo_name=config.github_repository,
         pr_number=config.pr_number,
         comment_id=config.comment_id,
@@ -69,7 +75,8 @@ def main():
 
             thread_context = "\n\n".join(thread_context_parts) if thread_context_parts else None
 
-            learner = TommiLearner(config=config, github_client=g)
+            tommi_g = auth_manager.get_client_for_repo(config.tommi_repo)
+            learner = TommiLearner(config=config, github_client=target_g, tommi_client=tommi_g)
             result = learner.process_feedback(
                 command_type=cmd_type,
                 feedback_text=feedback_text,
