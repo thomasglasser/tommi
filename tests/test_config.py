@@ -11,7 +11,7 @@ class TestConfig(unittest.TestCase):
         "PR_NUMBER": "42",
         "COMMENT_ID": "1001",
         "COMMENT_BODY": "/tommi review",
-        "MODEL_NAME": "gemini-2.5-flash",
+        "MODEL_NAME": "gemini-3.7-flash",
         "STRICTNESS": "strict",
         "TOMMI_REPO": "thomasglasser/tommi"
     })
@@ -23,7 +23,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.pr_number, 42)
         self.assertEqual(cfg.comment_id, 1001)
         self.assertEqual(cfg.comment_body, "/tommi review")
-        self.assertEqual(cfg.model_name, "gemini-2.5-flash")
+        self.assertEqual(cfg.model_name, "gemini-3.7-flash")
         self.assertEqual(cfg.strictness, "strict")
         self.assertEqual(cfg.tommi_repo, "thomasglasser/tommi")
 

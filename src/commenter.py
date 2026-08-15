@@ -21,11 +21,20 @@ class GitHubCommenter:
         if not self.comment_id:
             return
         try:
-            comment = self.repo.get_issue_comment(self.comment_id)
+            # Issue comments on PR
+            comment = self.pr.as_issue().get_comment(self.comment_id)
             comment.create_reaction(reaction)
-            logger.info(f"Added reaction '{reaction}' to comment #{self.comment_id}")
-        except Exception as e:
-            logger.warning(f"Failed to add reaction '{reaction}': {e}")
+            logger.info(f"Added reaction '{reaction}' to issue comment #{self.comment_id}")
+            return
+        except Exception as e1:
+            try:
+                # PR inline review comments
+                comment = self.pr.get_comment(self.comment_id)
+                comment.create_reaction(reaction)
+                logger.info(f"Added reaction '{reaction}' to review comment #{self.comment_id}")
+                return
+            except Exception as e2:
+                logger.warning(f"Failed to add reaction '{reaction}': {e1} / {e2}")
 
     def get_latest_commit(self) -> Commit:
         """Retrieves the latest commit in the pull request."""

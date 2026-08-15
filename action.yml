@@ -14,9 +14,9 @@ inputs:
     description: 'Google Gemini API Key'
     required: true
   model:
-    description: 'Gemini model to use for analysis (e.g. gemini-2.5-flash, gemini-2.5-pro)'
+    description: 'Gemini model to use for analysis (e.g. gemini-3.7-flash, gemini-3.6-flash)'
     required: false
-    default: 'gemini-2.5-flash'
+    default: 'gemini-3.7-flash'
   strictness:
     description: 'Review strictness mode (standard, strict, style-only, bugs-only)'
     required: false
