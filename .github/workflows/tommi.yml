@@ -8,8 +8,8 @@ on:
 
 jobs:
   tommi:
-    # Trigger on PR comments or review thread comments containing /tommi
-    if: contains(github.event.comment.body, '/tommi') && (github.event_name == 'pull_request_review_comment' || github.event.issue.pull_request != null)
+    # Trigger on any PR comment or review thread comment containing /tommi
+    if: contains(github.event.comment.body, '/tommi')
     runs-on: ubuntu-latest
     permissions:
       contents: write
