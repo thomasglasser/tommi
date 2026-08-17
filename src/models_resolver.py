@@ -13,22 +13,23 @@ FALLBACK_FLASH_MODELS = [
     "gemini-1.5-flash",
 ]
 
-_CACHED_RESOLVED_MODEL: Optional[str] = None
+_CACHED_RESOLVED_MODELS: Optional[List[str]] = None
 
 
-def resolve_model_name(client: genai.Client, configured_model: Optional[str] = "auto") -> str:
+def resolve_candidate_models(client: genai.Client, configured_model: Optional[str] = "auto") -> List[str]:
     """
-    Dynamically resolves the latest available Gemini model.
-    If 'auto' (or empty) is provided, queries the Gemini API for the newest supported flash model.
-    If a specific model name is provided, uses it directly.
+    Dynamically resolves a prioritized list of Gemini models to try.
+    If a specific model name is provided, returns [configured_model].
+    If 'auto' (or empty) is provided, queries the Gemini API for supported flash models
+    ordered from newest to oldest, falling back to static fallback list.
     """
-    global _CACHED_RESOLVED_MODEL
+    global _CACHED_RESOLVED_MODELS
 
     if configured_model and configured_model.strip().lower() != "auto":
-        return configured_model.strip()
+        return [configured_model.strip()]
 
-    if _CACHED_RESOLVED_MODEL:
-        return _CACHED_RESOLVED_MODEL
+    if _CACHED_RESOLVED_MODELS:
+        return _CACHED_RESOLVED_MODELS
 
     logger.info("Discovering latest available Gemini Flash model via API...")
     try:
@@ -54,10 +55,9 @@ def resolve_model_name(client: genai.Client, configured_model: Optional[str] = "
                 return (ver, is_exact)
 
             sorted_candidates = sorted(flash_candidates, key=sort_key, reverse=True)
-            best_model = sorted_candidates[0]
-            logger.info(f"Dynamically selected latest available model: '{best_model}' (from candidates: {sorted_candidates[:3]})")
-            _CACHED_RESOLVED_MODEL = best_model
-            return best_model
+            logger.info(f"Dynamically selected latest available model: '{sorted_candidates[0]}' (from candidates: {sorted_candidates[:3]})")
+            _CACHED_RESOLVED_MODELS = sorted_candidates
+            return sorted_candidates
 
     except Exception as e:
         logger.warning(f"Could not list models from Gemini API: {e}. Falling back to default list.")
@@ -65,5 +65,16 @@ def resolve_model_name(client: genai.Client, configured_model: Optional[str] = "
     # Fallback to standard preference list
     fallback = FALLBACK_FLASH_MODELS[0]
     logger.info(f"Using default fallback model: '{fallback}'")
-    _CACHED_RESOLVED_MODEL = fallback
-    return fallback
+    _CACHED_RESOLVED_MODELS = FALLBACK_FLASH_MODELS
+    return FALLBACK_FLASH_MODELS
+
+
+def resolve_model_name(client: genai.Client, configured_model: Optional[str] = "auto") -> str:
+    """
+    Dynamically resolves the latest available Gemini model.
+    If 'auto' (or empty) is provided, queries the Gemini API for the newest supported flash model.
+    If a specific model name is provided, uses it directly.
+    """
+    candidates = resolve_candidate_models(client, configured_model)
+    return candidates[0]
+

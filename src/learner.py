@@ -9,7 +9,8 @@ from google.genai import types
 
 from src.config import TommiConfig
 from src.rules_loader import load_all_rules
-from src.models_resolver import resolve_model_name
+from src.models_resolver import resolve_candidate_models, resolve_model_name
+from src.reviewer import QuotaExceededException, HighDemandException
 
 logger = logging.getLogger("tommi.learner")
 
@@ -20,6 +21,44 @@ class TommiLearner:
         self.g = github_client
         self.tommi_g = tommi_client or github_client
         self.client = genai.Client(api_key=config.gemini_api_key)
+
+    def _generate_content_with_fallback(self, prompt: str) -> str:
+        """Executes content generation, trying candidate models on 503 high demand before failing."""
+        candidate_models = resolve_candidate_models(self.client, self.config.model_name)
+        response = None
+        last_error = None
+        for i, model_name in enumerate(candidate_models):
+            logger.info(f"Running Gemini learning generation with model '{model_name}'...")
+            try:
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.1,
+                        response_mime_type="application/json",
+                    )
+                )
+                break
+            except Exception as e:
+                error_str = str(e).lower()
+                if "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str:
+                    logger.warning(f"Model '{model_name}' is experiencing high demand (503).")
+                    last_error = e
+                    if i < len(candidate_models) - 1:
+                        logger.info(f"Retrying with fallback model '{candidate_models[i+1]}'...")
+                        continue
+                    raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.") from e
+                elif "429" in error_str or "quota" in error_str or "exhausted" in error_str:
+                    raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota for today. Please try again later.") from e
+                else:
+                    raise RuntimeError(f"Failed to generate AI response: {e}") from e
+
+        if not response:
+            if last_error:
+                raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.") from last_error
+            raise RuntimeError("Failed to obtain response from Gemini API.")
+
+        return response.text
 
     def learn_from_merged_pr(
         self,
@@ -116,7 +155,6 @@ class TommiLearner:
         comments_text = "\n\n".join(formatted_comments)
 
         rules = load_all_rules()
-        model_name = resolve_model_name(self.client, self.config.model_name)
 
         prompt = f"""
 You are analyzing code review feedback made by repository maintainers (such as Thomas Glasser) on a newly MERGED Pull Request.
@@ -155,16 +193,9 @@ Your goal is to identify if the maintainers taught or enforced any reusable codi
    }}
 """
 
-        response = self.client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                response_mime_type="application/json",
-            )
-        )
+        raw_response = self._generate_content_with_fallback(prompt)
 
-        raw_json = response.text.strip()
+        raw_json = raw_response.strip()
         if raw_json.startswith("```json"):
             raw_json = raw_json[7:]
         if raw_json.startswith("```"):
@@ -204,7 +235,6 @@ Your goal is to identify if the maintainers taught or enforced any reusable codi
         """
         logger.info(f"Processing learning feedback for command '{command_type}'...")
         rules = load_all_rules()
-        model_name = resolve_model_name(self.client, self.config.model_name)
 
         # Build prompt for Gemini to determine the appropriate rule change
         prompt = f"""
@@ -241,16 +271,9 @@ Thomas has provided review feedback / correction on a Pull Request.
    - `rationale`: Explanation of why this rule was learned from the feedback.
 """
 
-        response = self.client.models.generate_content(
-            model=model_name,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.1,
-                response_mime_type="application/json",
-            )
-        )
+        raw_response = self._generate_content_with_fallback(prompt)
 
-        raw_json = response.text.strip()
+        raw_json = raw_response.strip()
         if raw_json.startswith("```json"):
             raw_json = raw_json[7:]
         if raw_json.startswith("```"):

@@ -1,6 +1,6 @@
 import unittest
 from unittest.mock import MagicMock
-from src.models_resolver import resolve_model_name
+from src.models_resolver import resolve_model_name, resolve_candidate_models
 
 class MockModel:
     def __init__(self, name):
@@ -11,6 +11,9 @@ class TestModelsResolver(unittest.TestCase):
         client = MagicMock()
         resolved = resolve_model_name(client, configured_model="gemini-custom-model")
         self.assertEqual(resolved, "gemini-custom-model")
+
+        candidates = resolve_candidate_models(client, configured_model="gemini-custom-model")
+        self.assertEqual(candidates, ["gemini-custom-model"])
 
     def test_auto_dynamic_discovery(self):
         client = MagicMock()
@@ -26,3 +29,4 @@ class TestModelsResolver(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -8,7 +8,7 @@ from google.genai import types
 from src.config import TommiConfig
 from src.diff_parser import parse_unified_diff, ParsedDiff
 from src.rules_loader import load_all_rules, LoadedRules
-from src.models_resolver import resolve_model_name
+from src.models_resolver import resolve_candidate_models, resolve_model_name
 
 logger = logging.getLogger("tommi.reviewer")
 
@@ -45,38 +45,56 @@ class TommiReviewer:
 
         parsed_diff = parse_unified_diff(diff_text)
         rules = load_all_rules()
-        model_name = resolve_model_name(self.client, self.config.model_name)
+        candidate_models = resolve_candidate_models(self.client, self.config.model_name)
 
         logger.info(f"Loaded rules ({len(rules.base_rules)} base modules, {len(rules.local_rules)} local files).")
-        logger.info(f"Running Gemini review with model '{model_name}'...")
-
         prompt = self._build_review_prompt(pr_title, pr_body, diff_text, rules)
 
-        try:
-            response = self.client.models.generate_content(
-                model=model_name,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    temperature=0.15,
-                    response_mime_type="application/json",
+        response = None
+        last_error = None
+        for i, model_name in enumerate(candidate_models):
+            logger.info(f"Running Gemini review with model '{model_name}'...")
+            try:
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=0.15,
+                        response_mime_type="application/json",
+                    )
                 )
-            )
+                break
+            except Exception as e:
+                error_str = str(e).lower()
+                if "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str:
+                    logger.warning(f"Model '{model_name}' is experiencing high demand (503).")
+                    last_error = e
+                    if i < len(candidate_models) - 1:
+                        logger.info(f"Retrying with fallback model '{candidate_models[i+1]}'...")
+                        continue
+                    raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.") from e
+                elif "429" in error_str or "quota" in error_str or "exhausted" in error_str:
+                    raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota for today. Please try again later.") from e
+                else:
+                    raise RuntimeError(f"Failed to generate or parse AI review response: {e}") from e
 
-            raw_json = response.text.strip()
-            if raw_json.startswith("```json"):
-                raw_json = raw_json[7:]
-            if raw_json.startswith("```"):
-                raw_json = raw_json[3:]
-            if raw_json.endswith("```"):
-                raw_json = raw_json[:-3]
+        if not response:
+            if last_error:
+                raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.") from last_error
+            raise RuntimeError("Failed to obtain response from Gemini API.")
 
+        raw_json = response.text.strip()
+        if raw_json.startswith("```json"):
+            raw_json = raw_json[7:]
+        if raw_json.startswith("```"):
+            raw_json = raw_json[3:]
+        if raw_json.endswith("```"):
+            raw_json = raw_json[:-3]
+
+        try:
             comments_data = json.loads(raw_json.strip())
-
         except Exception as e:
-            error_str = str(e).lower()
-            if "429" in error_str or "quota" in error_str or "exhausted" in error_str:
-                raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota for today. Please try again later.") from e
-            raise RuntimeError(f"Failed to generate or parse AI review response: {e}") from e
+            raise RuntimeError(f"Failed to parse AI review JSON: {e}") from e
 
         # Validate and adjust line numbers against parsed diff
         validated_comments = self._validate_comments(comments_data, parsed_diff)
@@ -145,3 +163,8 @@ You are reviewing a Pull Request in one of your repositories.
 
 class QuotaExceededException(Exception):
     pass
+
+
+class HighDemandException(Exception):
+    pass
+

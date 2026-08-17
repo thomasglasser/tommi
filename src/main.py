@@ -5,7 +5,7 @@ from github import Github
 from src.config import TommiConfig
 from src.github_auth import GitHubAuthManager
 from src.commenter import GitHubCommenter
-from src.reviewer import TommiReviewer, QuotaExceededException
+from src.reviewer import TommiReviewer, QuotaExceededException, HighDemandException
 from src.learner import TommiLearner
 
 # Setup logging
@@ -145,12 +145,25 @@ def main():
     except QuotaExceededException as qe:
         logger.warning(f"Quota error: {qe}")
         quota_msg = "😴 **T.O.M.M.I. is resting:** I've run out of AI API quota for today. Please try again tomorrow."
-        commenter.post_issue_comment(quota_msg)
-        commenter.add_reaction("confused")
+        commenter.reply_to_comment(quota_msg)
+    except HighDemandException as hde:
+        logger.warning(f"High demand error: {hde}")
+        demand_msg = "⏳ **T.O.M.M.I. is busy:** The AI model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again in a few moments."
+        commenter.reply_to_comment(demand_msg)
     except Exception as e:
-        logger.error(f"Error during execution: {e}", exc_info=True)
-        commenter.add_reaction("confused")
-        sys.exit(1)
+        error_str = str(e).lower()
+        if "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str:
+            logger.warning(f"High demand error: {e}")
+            demand_msg = "⏳ **T.O.M.M.I. is busy:** The AI model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again in a few moments."
+            commenter.reply_to_comment(demand_msg)
+        elif "429" in error_str or "quota" in error_str or "exhausted" in error_str:
+            logger.warning(f"Quota error: {e}")
+            quota_msg = "😴 **T.O.M.M.I. is resting:** I've run out of AI API quota for today. Please try again tomorrow."
+            commenter.reply_to_comment(quota_msg)
+        else:
+            logger.error(f"Error during execution: {e}", exc_info=True)
+            commenter.add_reaction("confused")
+            sys.exit(1)
 
 
 if __name__ == "__main__":
