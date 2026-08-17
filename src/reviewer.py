@@ -61,6 +61,7 @@ class TommiReviewer:
                     config=types.GenerateContentConfig(
                         temperature=0.15,
                         response_mime_type="application/json",
+                        max_output_tokens=8192,
                     )
                 )
                 break
@@ -96,7 +97,7 @@ class TommiReviewer:
         except Exception as e:
             raise RuntimeError(f"Failed to parse AI review JSON: {e}") from e
 
-        # Validate and adjust line numbers against parsed diff
+        # Validate, adjust line numbers, and sort by severity priority
         validated_comments = self._validate_comments(comments_data, parsed_diff)
         return validated_comments
 
@@ -118,25 +119,49 @@ You are reviewing a Pull Request in one of your repositories.
 {diff_text}
 ```
 
+### REVIEW PRIORITIZATION & SEVERITY TRIAGE:
+Evaluate every file and changed line thoroughly across the entire diff. Prioritize issues according to this hierarchy:
+1. **CRITICAL**:
+   - Functional bugs, logic flaws, broken math, or incorrect state mutations.
+   - Client/Server side safety violations (e.g. referencing client-only classes from common code, dedicated server crashes).
+   - Severe performance regressions (e.g. object allocations in `tick()` or per-frame methods, missing `BlockPos.Mutable`, unthrottled loops).
+   - Concurrency bugs, race conditions, or state corruption.
+2. **WARNING**:
+   - Architectural and contract violations (e.g. missing `Holder<T>` wrappers, hardcoded blocks/items instead of tags, improper lifecycle cleanup).
+   - Improper API / collection usage (e.g. standard `ArrayList` instead of FastUtil, streams in hot paths).
+   - Missing null checks or safety guards where nullability is ambiguous.
+3. **SUGGESTION**:
+   - Minor code style, naming conventions (abbreviations, non-descriptive variable names), class layout ordering, dead code, single-use variables needing inlining, or javadoc formatting.
+
 ### INSTRUCTIONS:
-1. Review the diff strictly against your code style standards, architectural rules, side-safety, performance restrictions, and clean design patterns.
-2. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-3. Identify ONLY real violations, bugs, or regressions. Do not leave nitpicks for valid code, and do NOT leave generic praise.
-4. Return your comments as a strict JSON array of objects.
-5. Each object must have:
+1. Review the entire diff thoroughly and comprehensively. Do NOT artificially limit or truncate the number of comments—report ALL genuine violations, bugs, side-safety issues, performance regressions, and style breaches found across all modified files and hunks.
+2. ALWAYS prioritize reporting critical bugs, side-safety crashes, and performance issues before reporting cosmetic style/naming nitpicks.
+3. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
+4. Do NOT leave generic praise or comment on valid, unchanged code.
+5. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+6. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs.
+   - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment.
-6. If there are no issues found, return an empty array `[]`.
-7. Return ONLY the raw JSON array.
+7. If there are no issues found, return an empty array `[]`.
+8. Return ONLY the raw JSON array.
 """
 
     def _validate_comments(self, raw_comments: List[Dict[str, Any]], parsed_diff: ParsedDiff) -> List[Dict[str, Any]]:
+        severity_rank = {
+            "CRITICAL": 1,
+            "WARNING": 2,
+            "SUGGESTION": 3,
+        }
+
         validated = []
         for item in raw_comments:
             path = item.get("path")
             line = item.get("line")
             body = item.get("body")
+            raw_sev = str(item.get("severity", "WARNING")).strip().upper()
+            severity = raw_sev if raw_sev in severity_rank else "WARNING"
 
             if not path or not line or not body:
                 continue
@@ -156,8 +181,12 @@ You are reviewing a Pull Request in one of your repositories.
             validated.append({
                 "path": path,
                 "line": line,
-                "body": body
+                "body": body,
+                "severity": severity,
             })
+
+        # Stable sort by severity: CRITICAL -> WARNING -> SUGGESTION
+        validated.sort(key=lambda c: severity_rank.get(c.get("severity", "WARNING"), 99))
         return validated
 
 

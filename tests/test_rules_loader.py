@@ -31,5 +31,12 @@ class TestRulesLoader(unittest.TestCase):
             self.assertIn("REPOSITORY-SPECIFIC RULES", formatted)
             self.assertIn("ALWAYS use custom holders", formatted)
 
+            # Assert base rule hierarchy: MINECRAFT -> PERFORMANCE -> JAVA -> CORE
+            idx_minecraft = formatted.index("[MINECRAFT]")
+            idx_perf = formatted.index("[PERFORMANCE]")
+            idx_java = formatted.index("[JAVA]")
+            idx_core = formatted.index("[CORE]")
+            self.assertTrue(idx_minecraft < idx_perf < idx_java < idx_core)
+
 if __name__ == "__main__":
     unittest.main()

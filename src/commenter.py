@@ -59,6 +59,7 @@ class GitHubCommenter:
             path = item.get("path")
             line = item.get("line")
             body = item.get("body")
+            severity = item.get("severity", "WARNING")
 
             if not path or not line or not body:
                 continue
@@ -72,10 +73,11 @@ class GitHubCommenter:
                     side="RIGHT"
                 )
                 placed_count += 1
-                logger.info(f"Posted inline comment on {path}:{line}")
+                logger.info(f"Posted inline comment [{severity}] on {path}:{line}")
             except GithubException as e:
                 logger.warning(f"Could not post inline comment on {path}:{line}: {e.data.get('message', str(e))}")
-                unplaced_comments.append(f"- **`{path}:{line}`**: {body}")
+                severity_tag = f"[{severity}] " if severity else ""
+                unplaced_comments.append(f"- **`{path}:{line}`** {severity_tag}: {body}")
 
         if unplaced_comments:
             fallback_body = (

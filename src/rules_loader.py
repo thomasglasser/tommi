@@ -12,9 +12,16 @@ class LoadedRules:
     def format_for_prompt(self) -> str:
         sections = []
 
-        # 1. Base Rules from TOMMI
+        # 1. Base Rules from TOMMI in priority order
+        rule_priority = ["minecraft", "performance", "java", "core"]
+        sorted_base_keys = sorted(
+            self.base_rules.keys(),
+            key=lambda k: (rule_priority.index(k) if k in rule_priority else 99, k)
+        )
+
         sections.append("### GLOBAL STYLE & ARCHITECTURE RULES:")
-        for rule_name, rule_content in sorted(self.base_rules.items()):
+        for rule_name in sorted_base_keys:
+            rule_content = self.base_rules[rule_name]
             sections.append(f"#### [{rule_name.upper()}]\n{rule_content.strip()}\n")
 
         # 2. Local Repository Rules (TOMMI.md / AGENTS.md)

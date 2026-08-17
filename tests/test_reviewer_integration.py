@@ -1,3 +1,4 @@
+import json
 import unittest
 from unittest.mock import patch, MagicMock
 from src.config import TommiConfig
@@ -13,9 +14,18 @@ class TestReviewerIntegration(unittest.TestCase):
 index 1111111..2222222 100644
 --- a/src/Test.java
 +++ b/src/Test.java
-@@ -1,3 +1,4 @@
+@@ -1,3 +1,12 @@
  public class Test {
 +    var x = 1;
++    int a = 2;
++    int b = 3;
++    int c = 4;
++    int d = 5;
++    int e = 6;
++    int f = 7;
++    int g = 8;
++    int h = 9;
++    int i = 10;
  }
 """
         mock_requests_get.return_value = mock_resp
@@ -33,18 +43,33 @@ index 1111111..2222222 100644
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
 
-            # Mock model response JSON
+            # Mock model response JSON with mixed severities returned in jumbled order
             mock_gen_response = MagicMock()
-            mock_gen_response.text = '[{"path": "src/Test.java", "line": 2, "body": "Do not use var keyword."}]'
+            mock_gen_response.text = json.dumps([
+                {"path": "src/Test.java", "line": 10, "body": "Rename 'x' to 'counter' for clarity.", "severity": "SUGGESTION"},
+                {"path": "src/Test.java", "line": 2, "body": "CRITICAL: Direct call to Minecraft.getInstance() in common code will crash dedicated server.", "severity": "CRITICAL"},
+                {"path": "src/Test.java", "line": 5, "body": "Use ObjectArrayList instead of ArrayList.", "severity": "WARNING"}
+            ])
             mock_client.models.generate_content.return_value = mock_gen_response
 
             reviewer = TommiReviewer(config)
             comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
 
-            self.assertEqual(len(comments), 1)
-            self.assertEqual(comments[0]["path"], "src/Test.java")
+            self.assertEqual(len(comments), 3)
+            # CRITICAL should be first
+            self.assertEqual(comments[0]["severity"], "CRITICAL")
             self.assertEqual(comments[0]["line"], 2)
-            self.assertEqual(comments[0]["body"], "Do not use var keyword.")
+            self.assertIn("crash dedicated server", comments[0]["body"])
+
+            # WARNING should be second
+            self.assertEqual(comments[1]["severity"], "WARNING")
+            self.assertEqual(comments[1]["line"], 5)
+            self.assertIn("ObjectArrayList", comments[1]["body"])
+
+            # SUGGESTION should be last
+            self.assertEqual(comments[2]["severity"], "SUGGESTION")
+            self.assertEqual(comments[2]["line"], 10)
+            self.assertIn("Rename 'x'", comments[2]["body"])
 
     @patch("src.reviewer.requests.get")
     def test_review_pr_high_demand_fallback(self, mock_requests_get):
@@ -130,6 +155,33 @@ index 1111111..2222222 100644
             reviewer = TommiReviewer(config)
             with self.assertRaises(QuotaExceededException):
                 reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+
+    def test_validate_comments_sorting(self):
+        from src.diff_parser import parse_unified_diff
+        diff = parse_unified_diff("diff --git a/Test.java b/Test.java\n@@ -1,5 +1,5 @@\n+line1\n+line2\n+line3\n+line4\n+line5\n")
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client"):
+            reviewer = TommiReviewer(config)
+
+        raw = [
+            {"path": "Test.java", "line": 5, "body": "nitpick 1", "severity": "SUGGESTION"},
+            {"path": "Test.java", "line": 1, "body": "critical crash", "severity": "CRITICAL"},
+            {"path": "Test.java", "line": 3, "body": "warning api", "severity": "WARNING"},
+            {"path": "Test.java", "line": 2, "body": "warning unstated severity"},
+            {"path": "Test.java", "line": 4, "body": "nitpick 2", "severity": "SUGGESTION"},
+        ]
+        validated = reviewer._validate_comments(raw, diff)
+        self.assertEqual(len(validated), 5)
+        self.assertEqual(validated[0]["severity"], "CRITICAL")
+        self.assertEqual(validated[0]["body"], "critical crash")
+        self.assertEqual(validated[1]["severity"], "WARNING")
+        self.assertEqual(validated[1]["body"], "warning api")
+        self.assertEqual(validated[2]["severity"], "WARNING")
+        self.assertEqual(validated[2]["body"], "warning unstated severity")
+        self.assertEqual(validated[3]["severity"], "SUGGESTION")
+        self.assertEqual(validated[3]["body"], "nitpick 1")
+        self.assertEqual(validated[4]["severity"], "SUGGESTION")
+        self.assertEqual(validated[4]["body"], "nitpick 2")
 
 if __name__ == "__main__":
     unittest.main()
