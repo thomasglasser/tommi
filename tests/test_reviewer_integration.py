@@ -183,6 +183,82 @@ index 1111111..2222222 100644
         self.assertEqual(validated[4]["severity"], "SUGGESTION")
         self.assertEqual(validated[4]["body"], "nitpick 2")
 
+    def test_parse_and_repair_json_clean(self):
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client"):
+            reviewer = TommiReviewer(config)
+
+        res = reviewer._parse_and_repair_json('[{"path": "Test.java", "line": 1, "body": "ok", "severity": "WARNING"}]')
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["path"], "Test.java")
+
+    def test_parse_and_repair_json_fences_and_wrappers(self):
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client"):
+            reviewer = TommiReviewer(config)
+
+        # Markdown fences
+        res = reviewer._parse_and_repair_json('```json\n[{"path": "Test.java", "line": 1, "body": "ok"}]\n```')
+        self.assertEqual(len(res), 1)
+
+        # Dict with 'comments' key
+        res = reviewer._parse_and_repair_json('{"comments": [{"path": "Test.java", "line": 1, "body": "ok"}]}')
+        self.assertEqual(len(res), 1)
+
+        # Single dict
+        res = reviewer._parse_and_repair_json('{"path": "Test.java", "line": 1, "body": "ok"}')
+        self.assertEqual(len(res), 1)
+
+    def test_parse_and_repair_json_truncated_salvage(self):
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client"):
+            reviewer = TommiReviewer(config)
+
+        # Truncated JSON array where 2nd object is cut off mid-string
+        truncated_json = """[
+          {"path": "Test.java", "line": 1, "body": "First issue", "severity": "CRITICAL"},
+          {"path": "Test2.java", "line": 5, "body": "Unterminated string starting at line 18 colu"""
+        res = reviewer._parse_and_repair_json(truncated_json)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["path"], "Test.java")
+        self.assertEqual(res[0]["body"], "First issue")
+
+    @patch("src.reviewer.requests.get")
+    def test_review_pr_fallback_on_parse_error(self, mock_requests_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "diff --git a/src/Test.java b/src/Test.java\n@@ -1,3 +1,3 @@\n+line1\n"
+        mock_requests_get.return_value = mock_resp
+
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto"
+        )
+
+        with patch("src.reviewer.genai.Client") as mock_client_cls, \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash", "gemini-2.0-flash"]):
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            # First candidate returns unparseable garbage, second returns valid JSON
+            resp1 = MagicMock()
+            resp1.text = "This is total garbage not JSON at all."
+            resp2 = MagicMock()
+            resp2.text = '[{"path": "src/Test.java", "line": 1, "body": "Fixed", "severity": "WARNING"}]'
+
+            mock_client.models.generate_content.side_effect = [resp1, resp2]
+
+            reviewer = TommiReviewer(config)
+            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+            self.assertEqual(len(comments), 1)
+            self.assertEqual(comments[0]["body"], "Fixed")
+            self.assertEqual(mock_client.models.generate_content.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 

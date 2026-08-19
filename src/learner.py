@@ -22,6 +22,40 @@ class TommiLearner:
         self.tommi_g = tommi_client or github_client
         self.client = genai.Client(api_key=config.gemini_api_key)
 
+    def _parse_json_dict(self, raw_text: str) -> Dict[str, Any]:
+        """Parses a JSON dictionary from response text, handling fences and prose."""
+        if not raw_text or not raw_text.strip():
+            raise ValueError("Empty response text")
+
+        text = raw_text.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+        try:
+            data = json.loads(text, strict=False)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+
+        # Extract {...} substring if enclosed in prose
+        start_idx = text.find("{")
+        end_idx = text.rfind("}")
+        if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+            try:
+                data = json.loads(text[start_idx:end_idx + 1], strict=False)
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+
+        raise ValueError(f"Unable to parse JSON dictionary from: {text[:200]}...")
+
     def _generate_content_with_fallback(self, prompt: str) -> str:
         """Executes content generation, trying candidate models on 503 high demand before failing."""
         candidate_models = resolve_candidate_models(self.client, self.config.model_name)
@@ -36,6 +70,7 @@ class TommiLearner:
                     config=types.GenerateContentConfig(
                         temperature=0.1,
                         response_mime_type="application/json",
+                        max_output_tokens=65536,
                     )
                 )
                 break
@@ -51,6 +86,11 @@ class TommiLearner:
                 elif "429" in error_str or "quota" in error_str or "exhausted" in error_str:
                     raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota for today. Please try again later.") from e
                 else:
+                    logger.warning(f"Failed to generate AI learning response with model '{model_name}': {e}")
+                    last_error = e
+                    if i < len(candidate_models) - 1:
+                        logger.info(f"Retrying with fallback model '{candidate_models[i+1]}'...")
+                        continue
                     raise RuntimeError(f"Failed to generate AI response: {e}") from e
 
         if not response:
@@ -195,16 +235,8 @@ Your goal is to identify if the maintainers taught or enforced any reusable codi
 
         raw_response = self._generate_content_with_fallback(prompt)
 
-        raw_json = raw_response.strip()
-        if raw_json.startswith("```json"):
-            raw_json = raw_json[7:]
-        if raw_json.startswith("```"):
-            raw_json = raw_json[3:]
-        if raw_json.endswith("```"):
-            raw_json = raw_json[:-3]
-
         try:
-            plan = json.loads(raw_json.strip())
+            plan = self._parse_json_dict(raw_response)
         except Exception as e:
             logger.error(f"Failed to parse learning JSON from Gemini: {e}")
             return None
@@ -272,16 +304,7 @@ Thomas has provided review feedback / correction on a Pull Request.
 """
 
         raw_response = self._generate_content_with_fallback(prompt)
-
-        raw_json = raw_response.strip()
-        if raw_json.startswith("```json"):
-            raw_json = raw_json[7:]
-        if raw_json.startswith("```"):
-            raw_json = raw_json[3:]
-        if raw_json.endswith("```"):
-            raw_json = raw_json[:-3]
-
-        learning_plan = json.loads(raw_json.strip())
+        learning_plan = self._parse_json_dict(raw_response)
         logger.info(f"Learned rule proposal: {learning_plan.get('summary')}")
 
         # Create PR on the central TOMMI repo

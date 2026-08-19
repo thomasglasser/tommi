@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 import requests
 from google import genai
 from google.genai import types
+from pydantic import BaseModel, Field
 
 from src.config import TommiConfig
 from src.diff_parser import parse_unified_diff, ParsedDiff
@@ -11,6 +12,13 @@ from src.rules_loader import load_all_rules, LoadedRules
 from src.models_resolver import resolve_candidate_models, resolve_model_name
 
 logger = logging.getLogger("tommi.reviewer")
+
+
+class ReviewCommentItem(BaseModel):
+    path: str = Field(description="The exact relative file path of the file being reviewed (matching the b/ path in diff).")
+    line: int = Field(description="The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs.")
+    severity: str = Field(default="WARNING", description="Severity of the issue: CRITICAL, WARNING, or SUGGESTION.")
+    body: str = Field(description="The review comment explaining the issue and how to resolve it.")
 
 
 class TommiReviewer:
@@ -32,6 +40,66 @@ class TommiReviewer:
             raise RuntimeError(f"Failed to fetch PR diff (HTTP {resp.status_code}): {resp.text}")
         return resp.text
 
+    def _parse_and_repair_json(self, raw_text: str) -> List[Dict[str, Any]]:
+        """
+        Parses JSON response text from Gemini, handling markdown code fences,
+        embedded JSON in prose, and gracefully salvaging truncated JSON arrays.
+        """
+        if not raw_text or not raw_text.strip():
+            return []
+
+        text = raw_text.strip()
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+        # 1. Direct JSON parse (with strict=False to handle unescaped control chars)
+        try:
+            data = json.loads(text, strict=False)
+            if isinstance(data, list):
+                return data
+            if isinstance(data, dict):
+                for key in ("comments", "reviews", "review_comments", "items", "data"):
+                    if key in data and isinstance(data[key], list):
+                        return data[key]
+                return [data]
+        except Exception:
+            pass
+
+        # 2. Extract bracketed array substring if model wrapped it in prose
+        start_idx = text.find("[")
+        if start_idx != -1:
+            end_idx = text.rfind("]")
+            if end_idx != -1 and end_idx > start_idx:
+                try:
+                    data = json.loads(text[start_idx:end_idx + 1], strict=False)
+                    if isinstance(data, list):
+                        return data
+                except Exception:
+                    pass
+
+        # 3. Attempt salvage of truncated JSON array (e.g. if token limit cut off the last item)
+        if start_idx != -1:
+            last_brace = text.rfind("}")
+            if last_brace != -1 and last_brace > start_idx:
+                salvage_candidate = text[start_idx:last_brace + 1].strip() + "]"
+                try:
+                    data = json.loads(salvage_candidate, strict=False)
+                    if isinstance(data, list) and data:
+                        logger.warning(
+                            f"AI review JSON was truncated mid-generation. Successfully salvaged {len(data)} completed review comment(s)."
+                        )
+                        return data
+                except Exception:
+                    pass
+
+        # 4. If all parsing/salvage attempts fail, raise RuntimeError
+        raise RuntimeError(f"Unable to parse AI review JSON response: {text[:200]}...")
+
     def review_pr(self, pr_title: str, pr_body: str, pr_url: str) -> List[Dict[str, Any]]:
         """
         Executes code review analysis on the pull request.
@@ -50,7 +118,7 @@ class TommiReviewer:
         logger.info(f"Loaded rules ({len(rules.base_rules)} base modules, {len(rules.local_rules)} local files).")
         prompt = self._build_review_prompt(pr_title, pr_body, diff_text, rules)
 
-        response = None
+        comments_data = None
         last_error = None
         for i, model_name in enumerate(candidate_models):
             logger.info(f"Running Gemini review with model '{model_name}'...")
@@ -61,9 +129,12 @@ class TommiReviewer:
                     config=types.GenerateContentConfig(
                         temperature=0.15,
                         response_mime_type="application/json",
-                        max_output_tokens=8192,
+                        response_schema=List[ReviewCommentItem],
+                        max_output_tokens=65536,
                     )
                 )
+                raw_json = response.text.strip() if response and response.text else ""
+                comments_data = self._parse_and_repair_json(raw_json)
                 break
             except Exception as e:
                 error_str = str(e).lower()
@@ -77,25 +148,17 @@ class TommiReviewer:
                 elif "429" in error_str or "quota" in error_str or "exhausted" in error_str:
                     raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota for today. Please try again later.") from e
                 else:
+                    logger.warning(f"Failed to generate or parse AI review response with model '{model_name}': {e}")
+                    last_error = e
+                    if i < len(candidate_models) - 1:
+                        logger.info(f"Retrying with fallback model '{candidate_models[i+1]}'...")
+                        continue
                     raise RuntimeError(f"Failed to generate or parse AI review response: {e}") from e
 
-        if not response:
+        if comments_data is None:
             if last_error:
                 raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.") from last_error
             raise RuntimeError("Failed to obtain response from Gemini API.")
-
-        raw_json = response.text.strip()
-        if raw_json.startswith("```json"):
-            raw_json = raw_json[7:]
-        if raw_json.startswith("```"):
-            raw_json = raw_json[3:]
-        if raw_json.endswith("```"):
-            raw_json = raw_json[:-3]
-
-        try:
-            comments_data = json.loads(raw_json.strip())
-        except Exception as e:
-            raise RuntimeError(f"Failed to parse AI review JSON: {e}") from e
 
         # Validate, adjust line numbers, and sort by severity priority
         validated_comments = self._validate_comments(comments_data, parsed_diff)
