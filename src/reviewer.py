@@ -123,16 +123,32 @@ class TommiReviewer:
         for i, model_name in enumerate(candidate_models):
             logger.info(f"Running Gemini review with model '{model_name}'...")
             try:
-                response = self.client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.15,
-                        response_mime_type="application/json",
-                        response_schema=List[ReviewCommentItem],
-                        max_output_tokens=65536,
+                try:
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=0.15,
+                            response_mime_type="application/json",
+                            response_schema=list[ReviewCommentItem],
+                            max_output_tokens=65536,
+                        )
                     )
-                )
+                except Exception as schema_err:
+                    if "schema" in str(schema_err).lower():
+                        logger.warning(f"Model '{model_name}' schema config error ({schema_err}), falling back to standard JSON generation...")
+                        response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                temperature=0.15,
+                                response_mime_type="application/json",
+                                max_output_tokens=65536,
+                            )
+                        )
+                    else:
+                        raise schema_err
+
                 raw_json = response.text.strip() if response and response.text else ""
                 comments_data = self._parse_and_repair_json(raw_json)
                 break
