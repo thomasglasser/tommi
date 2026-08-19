@@ -285,12 +285,36 @@ index 1111111..2222222 100644
                 ValueError("Unsupported schema type"),
                 resp2
             ]
-
             reviewer = TommiReviewer(config)
             comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
             self.assertEqual(len(comments), 1)
             self.assertEqual(comments[0]["body"], "Fixed after schema fallback")
             self.assertEqual(mock_client.models.generate_content.call_count, 2)
+
+    def test_real_genai_schema_serialization(self):
+        """
+        Validates that ReviewCommentItem produces a valid schema object
+        when processed by google.genai's real transformer without mocking.
+        """
+        from google import genai
+        from google.genai import types
+        from google.genai.models import _GenerateContentConfig_to_mldev
+        from src.reviewer import ReviewCommentItem
+
+        real_client = genai.Client(api_key="fake_key")
+        cfg = types.GenerateContentConfig(
+            temperature=0.15,
+            response_mime_type="application/json",
+            response_schema=list[ReviewCommentItem],
+            max_output_tokens=65536,
+        )
+
+        transformed = _GenerateContentConfig_to_mldev(real_client._api_client, cfg)
+        self.assertIn("responseSchema", transformed)
+        self.assertEqual(transformed["responseSchema"].type.value, "ARRAY")
+        self.assertIn("path", transformed["responseSchema"].items.properties)
+        self.assertIn("line", transformed["responseSchema"].items.properties)
+        self.assertIn("body", transformed["responseSchema"].items.properties)
 
 
 if __name__ == "__main__":
