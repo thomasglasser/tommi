@@ -317,7 +317,59 @@ index 1111111..2222222 100644
         self.assertIn("body", transformed["responseSchema"].items.properties)
 
 
+    @patch("src.reviewer.requests.get")
+    def test_review_pr_with_workspace_tool_call(self, mock_requests_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "diff --git a/src/Test.java b/src/Test.java\n+ var x = MyManager.get(player);\n"
+        mock_requests_get.return_value = mock_resp
+
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto"
+        )
+
+        with patch("src.reviewer.genai.Client") as mock_client_cls, \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash"]):
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            # Turn 1: Model calls search_codebase tool
+            fc = MagicMock()
+            fc.name = "search_codebase"
+            fc.args = {"query": "MyManager"}
+
+            part = MagicMock()
+            part.function_call = fc
+
+            candidate = MagicMock()
+            candidate.content.parts = [part]
+
+            resp_turn1 = MagicMock()
+            resp_turn1.function_calls = [fc]
+            resp_turn1.candidates = [candidate]
+
+            # Turn 2: Model returns final review after receiving tool response
+            resp_turn2 = MagicMock()
+            resp_turn2.function_calls = None
+            resp_turn2.candidates = []
+            resp_turn2.text = '[{"path": "src/Test.java", "line": 1, "body": "Do not use var", "severity": "WARNING"}]'
+
+            mock_client.models.generate_content.side_effect = [resp_turn1, resp_turn2]
+
+            reviewer = TommiReviewer(config)
+            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+
+            self.assertEqual(len(comments), 1)
+            self.assertEqual(comments[0]["body"], "Do not use var")
+            self.assertEqual(mock_client.models.generate_content.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
+
 
 

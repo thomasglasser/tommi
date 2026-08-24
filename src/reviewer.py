@@ -10,6 +10,7 @@ from src.config import TommiConfig
 from src.diff_parser import parse_unified_diff, ParsedDiff
 from src.rules_loader import load_all_rules, LoadedRules
 from src.models_resolver import resolve_candidate_models, resolve_model_name
+from src.repo_tools import WorkspaceInspector
 
 logger = logging.getLogger("tommi.reviewer")
 
@@ -22,10 +23,11 @@ class ReviewCommentItem(BaseModel):
 
 
 class TommiReviewer:
-    def __init__(self, config: TommiConfig, auth_token: Optional[str] = None):
+    def __init__(self, config: TommiConfig, auth_token: Optional[str] = None, workspace_dir: Optional[str] = None):
         self.config = config
         self.auth_token = auth_token or config.github_token
         self.client = genai.Client(api_key=config.gemini_api_key)
+        self.inspector = WorkspaceInspector(workspace_dir=workspace_dir)
 
     def fetch_pr_diff(self, pr_url: str) -> str:
         """Fetches the raw diff of the PR using GitHub API."""
@@ -100,6 +102,100 @@ class TommiReviewer:
         # 4. If all parsing/salvage attempts fail, raise RuntimeError
         raise RuntimeError(f"Unable to parse AI review JSON response: {text[:200]}...")
 
+    def _execute_review_generation(
+        self,
+        model_name: str,
+        prompt: str,
+        enable_tools: bool = True
+    ) -> str:
+        """
+        Executes review generation against Gemini, executing tool calls when Gemini needs
+        to inspect workspace files or trace definitions.
+        """
+        tool_map = self.inspector.get_tool_callables()
+        tools_list = list(tool_map.values()) if enable_tools else None
+
+        contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
+        max_tool_turns = 10
+
+        for turn in range(max_tool_turns):
+            gen_config = types.GenerateContentConfig(
+                temperature=0.15,
+                max_output_tokens=65536,
+            )
+            if tools_list:
+                gen_config.tools = tools_list
+
+            response = self.client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=gen_config,
+            )
+
+            # Check if Gemini returned function calls
+            raw_fcs = getattr(response, "function_calls", None)
+            function_calls = []
+            if raw_fcs:
+                try:
+                    for fc in raw_fcs:
+                        fc_name = getattr(fc, "name", None)
+                        if isinstance(fc_name, str) and fc_name in tool_map:
+                            function_calls.append(fc)
+                except Exception:
+                    pass
+
+            if not function_calls and response and hasattr(response, "candidates") and response.candidates:
+                candidate = response.candidates[0]
+                if candidate and hasattr(candidate, "content") and candidate.content and hasattr(candidate.content, "parts"):
+                    for p in (candidate.content.parts or []):
+                        fc = getattr(p, "function_call", None)
+                        fc_name = getattr(fc, "name", None)
+                        if isinstance(fc_name, str) and fc_name in tool_map:
+                            function_calls.append(fc)
+
+            if not function_calls:
+                # No more tool calls, return text
+                return response.text.strip() if response and response.text else ""
+
+            # Execute tool calls
+            tool_response_parts = []
+            for fc in function_calls:
+                fn_name = getattr(fc, "name", "")
+                fn_args = getattr(fc, "args", {}) or {}
+                if isinstance(fn_args, dict):
+                    call_kwargs = fn_args
+                elif hasattr(fn_args, "items"):
+                    call_kwargs = dict(fn_args.items())
+                else:
+                    call_kwargs = {}
+
+                logger.info(f"T.O.M.M.I. workspace tool call: {fn_name}({call_kwargs})")
+                tool_fn = tool_map.get(fn_name)
+                if tool_fn:
+                    try:
+                        result = str(tool_fn(**call_kwargs))
+                    except Exception as err:
+                        result = f"Error executing {fn_name}: {err}"
+                else:
+                    result = f"Tool '{fn_name}' not found."
+
+                tool_response_parts.append(
+                    types.Part.from_function_response(
+                        name=fn_name,
+                        response={"result": result}
+                    )
+                )
+
+            # Append model candidate and tool response to conversation history
+            if response.candidates and response.candidates[0].content:
+                contents.append(response.candidates[0].content)
+            else:
+                contents.append(types.Content(role="model", parts=[types.Part.from_function_call(name=fc.name, args=getattr(fc, "args", {})) for fc in function_calls]))
+
+            contents.append(types.Content(role="user", parts=tool_response_parts))
+
+        return ""
+
     def review_pr(self, pr_title: str, pr_body: str, pr_url: str) -> List[Dict[str, Any]]:
         """
         Executes code review analysis on the pull request.
@@ -116,7 +212,7 @@ class TommiReviewer:
         candidate_models = resolve_candidate_models(self.client, self.config.model_name)
 
         logger.info(f"Loaded rules ({len(rules.base_rules)} base modules, {len(rules.local_rules)} local files).")
-        prompt = self._build_review_prompt(pr_title, pr_body, diff_text, rules)
+        prompt = self._build_review_prompt(pr_title, pr_body, diff_text, rules, parsed_diff=parsed_diff)
 
         comments_data = None
         last_error = None
@@ -124,32 +220,11 @@ class TommiReviewer:
             logger.info(f"Running Gemini review with model '{model_name}'...")
             try:
                 try:
-                    response = self.client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=0.15,
-                            response_mime_type="application/json",
-                            response_schema=list[ReviewCommentItem],
-                            max_output_tokens=65536,
-                        )
-                    )
-                except Exception as schema_err:
-                    if "schema" in str(schema_err).lower():
-                        logger.warning(f"Model '{model_name}' schema config error ({schema_err}), falling back to standard JSON generation...")
-                        response = self.client.models.generate_content(
-                            model=model_name,
-                            contents=prompt,
-                            config=types.GenerateContentConfig(
-                                temperature=0.15,
-                                response_mime_type="application/json",
-                                max_output_tokens=65536,
-                            )
-                        )
-                    else:
-                        raise schema_err
+                    raw_json = self._execute_review_generation(model_name, prompt, enable_tools=True)
+                except Exception as tool_err:
+                    logger.warning(f"Model '{model_name}' failed with tools ({tool_err}), falling back without tools...")
+                    raw_json = self._execute_review_generation(model_name, prompt, enable_tools=False)
 
-                raw_json = response.text.strip() if response and response.text else ""
                 comments_data = self._parse_and_repair_json(raw_json)
                 break
             except Exception as e:
@@ -180,8 +255,20 @@ class TommiReviewer:
         validated_comments = self._validate_comments(comments_data, parsed_diff)
         return validated_comments
 
-    def _build_review_prompt(self, pr_title: str, pr_body: str, diff_text: str, rules: LoadedRules) -> str:
+    def _build_review_prompt(self, pr_title: str, pr_body: str, diff_text: str, rules: LoadedRules, parsed_diff: Optional[ParsedDiff] = None) -> str:
         formatted_rules = rules.format_for_prompt()
+
+        full_files_context = []
+        if parsed_diff and parsed_diff.files:
+            for file_path in list(parsed_diff.files.keys())[:10]:
+                content = self.inspector.read_file(file_path, start_line=1, end_line=500)
+                if not content.startswith("Error:"):
+                    full_files_context.append(content)
+
+        full_files_section = ""
+        if full_files_context:
+            full_files_section = "### MODIFIED FILES SURROUNDING SOURCE CODE (from checked-out repository):\n" + "\n\n".join(full_files_context) + "\n\n"
+
         return f"""
 You are Thomas Glasser (@thomasglasser), an expert Minecraft/NeoForge mod developer, architect, and strict code reviewer.
 You are reviewing a Pull Request in one of your repositories.
@@ -193,10 +280,16 @@ You are reviewing a Pull Request in one of your repositories.
 - **Title**: {pr_title}
 - **Description**: {pr_body or '(No description provided)'}
 
-### PULL REQUEST DIFF:
+{full_files_section}### PULL REQUEST DIFF:
 ```diff
 {diff_text}
 ```
+
+### REPOSITORY CODE TRACING INSTRUCTIONS & TOOLS:
+You have full access to workspace inspection tools (`read_file`, `search_codebase`, `find_files`, `get_symbol_definition`) to search, trace, and read ANY file in the repository workspace.
+1. **Trace Method Contracts Before Reviewing**: If code in the PR calls an external method, data attachment, helper, or class whose declaration is not in the diff, USE YOUR TOOLS to find and read the method's declaration and implementation.
+2. **Never Guess Return Types & Contracts**: Do NOT assume a method returns null, is a simple getter, or does not instantiate data (e.g. `get()` methods often act as `getOrCreate` in Minecraft mods). Look up the method definition first!
+3. **Verify Units**: Verify whether time values, cooldowns, or durations use ticks (via `SharedConstants.TICKS_PER_SECOND`) or other units in the referenced classes.
 
 ### REVIEW PRIORITIZATION & SEVERITY TRIAGE:
 Evaluate every file and changed line thoroughly across the entire diff. Prioritize issues according to this hierarchy:
