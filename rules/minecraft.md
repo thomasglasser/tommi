@@ -23,6 +23,8 @@
 * **GUI Translucency & Culling**: When rendering flat or custom 2D geometry in GUI, NEVER use a `RenderType` with culling enabled. The GUI's flipped Y-axis scale inverses screen-space winding orders. Use non-culling render types.
 
 ## 4. Naming & Terminology
+
+* **Event Handlers**: Do NOT include `Event` in event handler method names. Name event handlers by prefixing with `on` and working backwards through nested event class names (e.g., `MiraculousEvent.Transform.Finish` becomes `onFinishTransformMiraculous`, `LivingFallEvent` becomes `onLivingFall`).
 * **Event Handlers**: Do NOT include `Event` in event handler method names (e.g., use `onLivingFall` instead of `onLivingFallEvent`).
 * **Avoid "Tool" for Non-Tools**: Reserve the word "tool" strictly for actual tools (pickaxes, axes, shovels). Do NOT use it for miscellaneous, throwable, or magical items.
 
