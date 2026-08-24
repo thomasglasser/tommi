@@ -49,7 +49,7 @@ jobs:
           private-key: ${{ secrets.TOMMI_PRIVATE_KEY }}
 
       - name: Run T.O.M.M.I.
-        uses: thomasglasser/tommi@v1
+        uses: thomasglasser/tommi@main
         with:
           github-token: ${{ steps.generate-token.outputs.token }}
           gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
