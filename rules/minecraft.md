@@ -1,6 +1,8 @@
 # Minecraft & NeoForge Modding Best Practices
 
 ## 1. Client vs. Server Separation & Side Safety
+
+* **ServerLevel Nullability**: `ServerLevel#getServer()` is guaranteed to be non-null. NEVER suggest null-checking `ServerLevel#getServer()` or flag calls on it as potential `NullPointerException`s.
 * **Dedicated Server Safety**: NEVER use client-only classes (`Minecraft`, `KeyMapping`, `LocalPlayer`, GUI screens) in common code. This will crash dedicated servers.
 * **Side-Safe Access**: Use client-safe utilities (such as `ClientUtils.getLocalPlayer()` or distribution executors) when referencing client objects from shared logic.
 * **Server Authority**: Perform physics, state mutations, movement delta calculations, and game logic on the server, not the client.
