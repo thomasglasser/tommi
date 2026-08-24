@@ -26,7 +26,7 @@
 
 ## 5. APIs
 
-* **Ability Context**: `Ability.Context#level()` returns a `ServerLevel` directly. NEVER flag calls to `context.level().getServer()` on `Ability.Context` as unsafe or requiring `instanceof ServerLevel` checks.
+* **Return Types**: ALWAYS verify what methods return instead of assuming (for example, a `level()` method could return a ServerLevel instead of a Level, so it has certain non-nullability of the server).
 
 * **Side-Effectful Method Calls & Cache Checks**: Do NOT flag `containsKey` or presence checks followed by method calls (e.g., `getBakedModel`) as duplicate lookups when the called method performs essential side effects, initialization, or fallback logic that direct map retrieval (`get()`) bypasses.
 
