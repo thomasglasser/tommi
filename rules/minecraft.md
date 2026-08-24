@@ -2,6 +2,8 @@
 
 ## 1. Client vs. Server Separation & Side Safety
 
+* **Clientbound Packets & Client Utilities**: Do NOT flag calls to client utility classes (e.g., `*ClientUtils`) inside clientbound packet handlers (`handle` methods on clientbound payloads) as side-unsafe; clientbound packet execution occurs exclusively on the client side.
+
 * **ServerLevel Nullability**: `ServerLevel#getServer()` is guaranteed to be non-null. NEVER suggest null-checking `ServerLevel#getServer()` or flag calls on it as potential `NullPointerException`s.
 * **Dedicated Server Safety**: NEVER use client-only classes (`Minecraft`, `KeyMapping`, `LocalPlayer`, GUI screens) in common code. This will crash dedicated servers.
 * **Side-Safe Access**: Use client-safe utilities (such as `ClientUtils.getLocalPlayer()` or distribution executors) when referencing client objects from shared logic.
