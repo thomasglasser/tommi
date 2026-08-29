@@ -57,41 +57,51 @@ class TommiLearner:
         raise ValueError(f"Unable to parse JSON dictionary from: {text[:200]}...")
 
     def _generate_content_with_fallback(self, prompt: str) -> str:
-        """Executes content generation, trying candidate models on 503 high demand before failing."""
+        """Executes content generation, trying candidate models with backoff on 503/429 before failing."""
         candidate_models = resolve_candidate_models(self.client, self.config.model_name)
         response = None
         last_error = None
         for i, model_name in enumerate(candidate_models):
             logger.info(f"Running Gemini learning generation with model '{model_name}'...")
-            try:
-                response = self.client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=0.1,
-                        response_mime_type="application/json",
-                        max_output_tokens=65536,
+            max_attempts = 2
+            for attempt in range(max_attempts):
+                try:
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            temperature=0.1,
+                            response_mime_type="application/json",
+                            max_output_tokens=65536,
+                        )
                     )
-                )
+                    break
+                except Exception as e:
+                    error_str = str(e).lower()
+                    last_error = e
+                    is_503 = "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str
+                    is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str
+
+                    if is_503 or is_429:
+                        if attempt < max_attempts - 1:
+                            backoff_sec = (attempt + 1) * 3
+                            logger.warning(
+                                f"Learner model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'} on attempt {attempt + 1}. "
+                                f"Backing off for {backoff_sec}s before retry..."
+                            )
+                            time.sleep(backoff_sec)
+                            continue
+                        else:
+                            logger.warning(f"Learner model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}.")
+                            break
+                    else:
+                        logger.warning(f"Failed to generate AI learning response with model '{model_name}': {e}")
+                        break
+
+            if response:
                 break
-            except Exception as e:
-                error_str = str(e).lower()
-                if "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str:
-                    logger.warning(f"Model '{model_name}' is experiencing high demand (503).")
-                    last_error = e
-                    if i < len(candidate_models) - 1:
-                        logger.info(f"Retrying with fallback model '{candidate_models[i+1]}'...")
-                        continue
-                    raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.") from e
-                elif "429" in error_str or "quota" in error_str or "exhausted" in error_str:
-                    raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota for today. Please try again later.") from e
-                else:
-                    logger.warning(f"Failed to generate AI learning response with model '{model_name}': {e}")
-                    last_error = e
-                    if i < len(candidate_models) - 1:
-                        logger.info(f"Retrying with fallback model '{candidate_models[i+1]}'...")
-                        continue
-                    raise RuntimeError(f"Failed to generate AI response: {e}") from e
+            elif i < len(candidate_models) - 1:
+                logger.info(f"Retrying with fallback model '{candidate_models[i + 1]}'...")
 
         if not response:
             if last_error:
