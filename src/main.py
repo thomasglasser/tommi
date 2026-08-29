@@ -68,7 +68,10 @@ def main():
         if "/tommi help" in comment_body or comment_body == "/tommi":
             help_msg = (
                 "🤖 **T.O.M.M.I. AI Assistant Commands**\n\n"
-                "• `/tommi review` or `/review` — Run automated code review against this PR\n"
+                "• `/tommi review` or `/review` — Run standard code review\n"
+                "• `/tommi review bugs-only` — Review strictly for critical bugs & server-safety crashes (suppress style nits)\n"
+                "• `/tommi review strict` — Review with maximum strictness for all rules and conventions\n"
+                "• `/tommi review style-only` — Review only naming, code layout, annotations, and DRY principles\n"
                 "• `/tommi false-positive <explanation>` — Report an inaccurate review comment to refine rules\n"
                 "• `/tommi learn <rule>` — Teach a new coding standard or architectural rule\n"
                 "• `/tommi help` — Display this command reference"
@@ -133,6 +136,20 @@ def main():
             logger.info("Successfully processed learning feedback.")
 
         elif "/tommi review" in comment_body or "/review" in comment_body or config.event_name == "pull_request":
+            # Check for strictness override in comment body
+            lower_comment = comment_body.lower()
+            if "bugs-only" in lower_comment or "bugs" in lower_comment.split():
+                config.strictness = "bugs-only"
+                logger.info("Strictness overridden to 'bugs-only' from comment.")
+            elif "style-only" in lower_comment or "style" in lower_comment.split():
+                config.strictness = "style-only"
+                logger.info("Strictness overridden to 'style-only' from comment.")
+            elif "strict" in lower_comment.split():
+                config.strictness = "strict"
+                logger.info("Strictness overridden to 'strict' from comment.")
+            elif "standard" in lower_comment.split():
+                config.strictness = "standard"
+
             # Code Review Mode (Comment or Automatic on PR Event)
             reviewer = TommiReviewer(config=config, auth_token=target_token)
             comments = reviewer.review_pr(
