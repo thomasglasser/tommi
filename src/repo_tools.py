@@ -38,21 +38,22 @@ class WorkspaceInspector:
             return full_path
         return None
 
-    def read_file(self, file_path: str, start_line: int = 1, end_line: int = 150) -> str:
+    def read_file(self, file_path: str, start_line: int = 1, end_line: int = 150, max_lines: int = 200) -> str:
         """
         Reads a specific range of lines from a file in the workspace repository.
         
         Args:
             file_path: The relative path to the file from the repository root (e.g. 'src/main/java/com/mod/MyClass.java').
             start_line: The 1-based start line number (default: 1).
-            end_line: The 1-based end line number (inclusive, max 200 lines per call).
+            end_line: The 1-based end line number (inclusive).
+            max_lines: Maximum number of lines allowed in a single slice (default: 200).
         """
         target = self._resolve_safe_path(file_path)
         if not target or not os.path.isfile(target):
             return f"Error: File '{file_path}' not found in workspace."
 
         start_line = max(1, start_line)
-        end_line = max(start_line, min(start_line + 200, end_line))
+        end_line = max(start_line, min(start_line + max_lines, end_line))
 
         try:
             with open(target, "r", encoding="utf-8", errors="replace") as f:
@@ -71,6 +72,56 @@ class WorkspaceInspector:
 
         header = f"=== File: {file_path} (Lines {start_line}-{min(end_line, total_lines)} of {total_lines}) ==="
         return f"{header}\n" + "\n".join(formatted)
+
+    def get_hunk_context(self, file_path: str, changed_lines: Optional[List[int]] = None, padding: int = 40) -> str:
+        """
+        Reads the surrounding context for changed lines in a file.
+        If the entire file is <= 400 lines, returns the complete file.
+        Otherwise, returns merged window slices around changed lines with line numbers.
+        """
+        target = self._resolve_safe_path(file_path)
+        if not target or not os.path.isfile(target):
+            return f"Error: File '{file_path}' not found in workspace."
+
+        try:
+            with open(target, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+        except Exception as e:
+            return f"Error reading file '{file_path}': {e}"
+
+        total_lines = len(lines)
+        if total_lines == 0:
+            return f"=== File: {file_path} (Empty file) ==="
+
+        # If file is small or no specific changed lines provided, return the whole file
+        if total_lines <= 400 or not changed_lines:
+            formatted = [f"{i:4d}: {line.rstrip()}" for i, line in enumerate(lines, start=1)]
+            header = f"=== File: {file_path} (Lines 1-{total_lines} of {total_lines}) ==="
+            return f"{header}\n" + "\n".join(formatted)
+
+        # Merge overlapping ranges around changed lines
+        ranges = []
+        for line_num in sorted(changed_lines):
+            start = max(1, line_num - padding)
+            end = min(total_lines, line_num + padding)
+            if not ranges:
+                ranges.append([start, end])
+            else:
+                last_start, last_end = ranges[-1]
+                if start <= last_end + 5:
+                    ranges[-1][1] = max(last_end, end)
+                else:
+                    ranges.append([start, end])
+
+        # Format merged slices
+        sections = []
+        for start, end in ranges:
+            slice_lines = lines[start - 1:end]
+            formatted = [f"{i:4d}: {line.rstrip()}" for i, line in enumerate(slice_lines, start=start)]
+            header = f"--- {file_path} (Lines {start}-{end} of {total_lines}) ---"
+            sections.append(f"{header}\n" + "\n".join(formatted))
+
+        return f"=== File Context: {file_path} ===\n" + "\n\n".join(sections)
 
     def find_files(self, pattern: str) -> str:
         """

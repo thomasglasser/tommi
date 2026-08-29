@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from typing import List, Dict, Any, Optional
 import requests
 from google import genai
@@ -116,7 +117,7 @@ class TommiReviewer:
         tools_list = list(tool_map.values()) if enable_tools else None
 
         contents = [types.Content(role="user", parts=[types.Part.from_text(text=prompt)])]
-        max_tool_turns = 10
+        max_tool_turns = 3
 
         for turn in range(max_tool_turns):
             gen_config = types.GenerateContentConfig(
@@ -194,11 +195,22 @@ class TommiReviewer:
 
             contents.append(types.Content(role="user", parts=tool_response_parts))
 
-        return ""
+        # If tool budget reached, make one final generation turn without tools to synthesize review
+        logger.info("Tool budget reached. Requesting final review synthesis...")
+        final_config = types.GenerateContentConfig(
+            temperature=0.15,
+            max_output_tokens=65536,
+        )
+        final_response = self.client.models.generate_content(
+            model=model_name,
+            contents=contents,
+            config=final_config,
+        )
+        return final_response.text.strip() if final_response and final_response.text else ""
 
     def review_pr(self, pr_title: str, pr_body: str, pr_url: str) -> List[Dict[str, Any]]:
         """
-        Executes code review analysis on the pull request.
+        Executes code review analysis on the pull request with transient error retry and model candidate failover.
         """
         logger.info(f"Fetching PR #{self.config.pr_number} diff...")
         diff_text = self.fetch_pr_diff(pr_url)
@@ -216,39 +228,53 @@ class TommiReviewer:
 
         comments_data = None
         last_error = None
+
         for i, model_name in enumerate(candidate_models):
             logger.info(f"Running Gemini review with model '{model_name}'...")
-            try:
+            model_succeeded = False
+            max_attempts = 2
+
+            for attempt in range(max_attempts):
                 try:
                     raw_json = self._execute_review_generation(model_name, prompt, enable_tools=True)
-                except Exception as tool_err:
-                    logger.warning(f"Model '{model_name}' failed with tools ({tool_err}), falling back without tools...")
-                    raw_json = self._execute_review_generation(model_name, prompt, enable_tools=False)
+                    comments_data = self._parse_and_repair_json(raw_json)
+                    model_succeeded = True
+                    break
+                except Exception as e:
+                    error_str = str(e).lower()
+                    last_error = e
+                    is_503 = "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str
+                    is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str
 
-                comments_data = self._parse_and_repair_json(raw_json)
+                    if is_503 or is_429:
+                        if attempt < max_attempts - 1:
+                            backoff_sec = (attempt + 1) * 3
+                            logger.warning(
+                                f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'} on attempt {attempt + 1}. "
+                                f"Backing off for {backoff_sec}s before retry..."
+                            )
+                            time.sleep(backoff_sec)
+                            continue
+                        else:
+                            logger.warning(f"Model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}.")
+                            break
+                    else:
+                        logger.warning(f"Generation or JSON parsing failed with model '{model_name}': {e}")
+                        break
+
+            if model_succeeded and comments_data is not None:
                 break
-            except Exception as e:
-                error_str = str(e).lower()
-                if "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str:
-                    logger.warning(f"Model '{model_name}' is experiencing high demand (503).")
-                    last_error = e
-                    if i < len(candidate_models) - 1:
-                        logger.info(f"Retrying with fallback model '{candidate_models[i+1]}'...")
-                        continue
-                    raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.") from e
-                elif "429" in error_str or "quota" in error_str or "exhausted" in error_str:
-                    raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota for today. Please try again later.") from e
-                else:
-                    logger.warning(f"Failed to generate or parse AI review response with model '{model_name}': {e}")
-                    last_error = e
-                    if i < len(candidate_models) - 1:
-                        logger.info(f"Retrying with fallback model '{candidate_models[i+1]}'...")
-                        continue
-                    raise RuntimeError(f"Failed to generate or parse AI review response: {e}") from e
+            elif i < len(candidate_models) - 1:
+                logger.info(f"Failing over to next candidate model '{candidate_models[i + 1]}'...")
 
         if comments_data is None:
             if last_error:
-                raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.") from last_error
+                err_str = str(last_error).lower()
+                if "503" in err_str or "high demand" in err_str or "unavailable" in err_str or "overloaded" in err_str:
+                    raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.") from last_error
+                elif "429" in err_str or "quota" in err_str or "exhausted" in err_str or "resourceexhausted" in err_str:
+                    raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota for today. Please try again later.") from last_error
+                raise RuntimeError(f"Failed to generate or parse AI review response: {last_error}") from last_error
             raise RuntimeError("Failed to obtain response from Gemini API.")
 
         # Validate, adjust line numbers, and sort by severity priority
@@ -260,8 +286,8 @@ class TommiReviewer:
 
         full_files_context = []
         if parsed_diff and parsed_diff.files:
-            for file_path in list(parsed_diff.files.keys())[:10]:
-                content = self.inspector.read_file(file_path, start_line=1, end_line=500)
+            for file_path, lines_set in list(parsed_diff.files.items())[:15]:
+                content = self.inspector.get_hunk_context(file_path, changed_lines=list(lines_set), padding=40)
                 if not content.startswith("Error:"):
                     full_files_context.append(content)
 
@@ -286,10 +312,11 @@ You are reviewing a Pull Request in one of your repositories.
 ```
 
 ### REPOSITORY CODE TRACING INSTRUCTIONS & TOOLS:
-You have full access to workspace inspection tools (`read_file`, `search_codebase`, `find_files`, `get_symbol_definition`) to search, trace, and read ANY file in the repository workspace.
-1. **Trace Method Contracts Before Reviewing**: If code in the PR calls an external method, data attachment, helper, or class whose declaration is not in the diff, USE YOUR TOOLS to find and read the method's declaration and implementation.
-2. **Never Guess Return Types & Contracts**: Do NOT assume a method returns null, is a simple getter, or does not instantiate data (e.g. `get()` methods often act as `getOrCreate` in Minecraft mods). Look up the method definition first!
-3. **Verify Units**: Verify whether time values, cooldowns, or durations use ticks (via `SharedConstants.TICKS_PER_SECOND`) or other units in the referenced classes.
+You have access to workspace inspection tools (`read_file`, `search_codebase`, `find_files`, `get_symbol_definition`) to search, trace, and read files in the repository workspace.
+- **Surrounding Context Already Provided**: The surrounding source code for all modified files is already provided above in the 'MODIFIED FILES SURROUNDING SOURCE CODE' section. Do NOT make redundant tool calls to re-read files already shown above.
+- **Trace External Contracts**: If code in the PR calls external methods, data attachments, helpers, or classes across the codebase whose declarations are not in the diff or surrounding code, use tools (`get_symbol_definition` or `search_codebase`) to check their definitions.
+- **Never Guess Return Types & Contracts**: Do NOT assume a method returns null, is a simple getter, or does not instantiate data (e.g. `get()` methods often act as `getOrCreate` in Minecraft mods). Look up the method definition first!
+- **Verify Units**: Verify whether time values, cooldowns, or durations use ticks (via `SharedConstants.TICKS_PER_SECOND`) or other units in the referenced classes.
 
 ### REVIEW PRIORITIZATION & SEVERITY TRIAGE:
 Evaluate every file and changed line thoroughly across the entire diff. Prioritize issues according to this hierarchy:

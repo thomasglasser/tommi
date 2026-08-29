@@ -69,6 +69,24 @@ class TestWorkspaceInspector(unittest.TestCase):
         method_result = self.inspector.get_symbol_definition("get")
         self.assertIn("public static MyAttachment get", method_result)
 
+    def test_get_hunk_context_small_file(self):
+        result = self.inspector.get_hunk_context("src/main/java/com/example/MyAttachment.java", changed_lines=[6, 7])
+        self.assertIn("=== File: src/main/java/com/example/MyAttachment.java (Lines 1-11 of 11) ===", result)
+        self.assertIn("DURATION_TICKS", result)
+
+    def test_get_hunk_context_large_file(self):
+        # Create a file with 500 lines
+        large_file = os.path.join(self.workspace, "Large.java")
+        with open(large_file, "w", encoding="utf-8") as f:
+            for i in range(1, 501):
+                f.write(f"// Line {i}\n")
+
+        result = self.inspector.get_hunk_context("Large.java", changed_lines=[300], padding=10)
+        self.assertIn("=== File Context: Large.java ===", result)
+        self.assertIn("Lines 290-310 of 500", result)
+        self.assertIn("// Line 300", result)
+        self.assertNotIn("// Line 100", result)
+
 
 if __name__ == "__main__":
     unittest.main()

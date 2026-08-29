@@ -87,14 +87,16 @@ index 1111111..2222222 100644
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
-             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash", "gemini-2.0-flash"]):
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash", "gemini-2.0-flash"]), \
+             patch("src.reviewer.time.sleep") as mock_sleep:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
 
-            # First candidate throws 503 high demand, second succeeds
+            # First candidate throws 503 high demand (2 attempts with backoff), second succeeds
             mock_gen_response = MagicMock()
             mock_gen_response.text = '[]'
             mock_client.models.generate_content.side_effect = [
+                Exception("503 UNAVAILABLE: This model is currently experiencing high demand."),
                 Exception("503 UNAVAILABLE: This model is currently experiencing high demand."),
                 mock_gen_response
             ]
@@ -102,7 +104,8 @@ index 1111111..2222222 100644
             reviewer = TommiReviewer(config)
             comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
             self.assertEqual(comments, [])
-            self.assertEqual(mock_client.models.generate_content.call_count, 2)
+            self.assertEqual(mock_client.models.generate_content.call_count, 3)
+            mock_sleep.assert_called_once()
 
     @patch("src.reviewer.requests.get")
     def test_review_pr_all_high_demand(self, mock_requests_get):
@@ -120,7 +123,8 @@ index 1111111..2222222 100644
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
-             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash"]):
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash"]), \
+             patch("src.reviewer.time.sleep"):
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
 
@@ -146,7 +150,8 @@ index 1111111..2222222 100644
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
-             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash"]):
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash"]), \
+             patch("src.reviewer.time.sleep"):
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
 
@@ -273,7 +278,7 @@ index 1111111..2222222 100644
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
-             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash"]):
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash", "gemini-2.0-flash"]):
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
 
@@ -366,6 +371,101 @@ index 1111111..2222222 100644
             self.assertEqual(len(comments), 1)
             self.assertEqual(comments[0]["body"], "Do not use var")
             self.assertEqual(mock_client.models.generate_content.call_count, 2)
+
+    @patch("src.reviewer.requests.get")
+    def test_tool_error_503_raises_high_demand_and_never_claims_zero_violations(self, mock_requests_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "diff --git a/src/Test.java b/src/Test.java\n+ var x = MyManager.get(player);\n"
+        mock_requests_get.return_value = mock_resp
+
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto"
+        )
+
+        with patch("src.reviewer.genai.Client") as mock_client_cls, \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash"]), \
+             patch("src.reviewer.time.sleep"):
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            # Turn 1: Model requests a tool
+            fc = MagicMock()
+            fc.name = "search_codebase"
+            fc.args = {"query": "MyManager"}
+            part = MagicMock()
+            part.function_call = fc
+            candidate = MagicMock()
+            candidate.content.parts = [part]
+            resp_turn1 = MagicMock()
+            resp_turn1.function_calls = [fc]
+            resp_turn1.candidates = [candidate]
+
+            # Turn 2: Attempting to send tool response throws 503 UNAVAILABLE
+            mock_client.models.generate_content.side_effect = [
+                resp_turn1,
+                Exception("503 UNAVAILABLE: This model is currently experiencing high demand."),
+                Exception("503 UNAVAILABLE: This model is currently experiencing high demand.")
+            ]
+
+            reviewer = TommiReviewer(config)
+            # MUST raise HighDemandException rather than returning [] or masking the error
+            with self.assertRaises(HighDemandException):
+                reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+
+    @patch("src.reviewer.requests.get")
+    def test_tool_budget_exhaustion_synthesizes_final_turn(self, mock_requests_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "diff --git a/src/Test.java b/src/Test.java\n+ int x = 1;\n"
+        mock_requests_get.return_value = mock_resp
+
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto"
+        )
+
+        with patch("src.reviewer.genai.Client") as mock_client_cls, \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash"]):
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            fc = MagicMock()
+            fc.name = "find_files"
+            fc.args = {"pattern": "*.java"}
+            part = MagicMock()
+            part.function_call = fc
+            candidate = MagicMock()
+            candidate.content.parts = [part]
+            resp_tool_turn = MagicMock()
+            resp_tool_turn.function_calls = [fc]
+            resp_tool_turn.candidates = [candidate]
+
+            final_resp = MagicMock()
+            final_resp.function_calls = None
+            final_resp.candidates = []
+            final_resp.text = '[{"path": "src/Test.java", "line": 1, "body": "Synthesized after 3 tool turns", "severity": "SUGGESTION"}]'
+
+            # 3 tool turns + 1 final synthesis turn = 4 generate_content calls
+            mock_client.models.generate_content.side_effect = [
+                resp_tool_turn,
+                resp_tool_turn,
+                resp_tool_turn,
+                final_resp
+            ]
+
+            reviewer = TommiReviewer(config)
+            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+            self.assertEqual(len(comments), 1)
+            self.assertEqual(comments[0]["body"], "Synthesized after 3 tool turns")
+            self.assertEqual(mock_client.models.generate_content.call_count, 4)
 
 
 if __name__ == "__main__":
