@@ -14,7 +14,6 @@ class TommiConfig:
     comment_id: Optional[int] = None
     comment_body: str = ""
     model_name: str = "auto"
-    strictness: str = "standard"  # standard, strict, style-only, bugs-only
     tommi_repo: str = "thomasglasser/tommi"
     in_reply_to_id: Optional[int] = None
     diff_hunk: str = ""
@@ -55,7 +54,6 @@ class TommiConfig:
         is_merged = is_merged_str in ("true", "1", "yes")
 
         model_name = os.environ.get("MODEL_NAME", "auto").strip()
-        strictness = os.environ.get("STRICTNESS", "standard").strip()
         tommi_repo = os.environ.get("TOMMI_REPO", "thomasglasser/tommi").strip()
 
         return cls(
@@ -68,7 +66,6 @@ class TommiConfig:
             comment_id=comment_id,
             comment_body=comment_body,
             model_name=model_name,
-            strictness=strictness,
             tommi_repo=tommi_repo,
             in_reply_to_id=in_reply_to_id,
             diff_hunk=diff_hunk,

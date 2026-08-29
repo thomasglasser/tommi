@@ -285,17 +285,6 @@ class TommiReviewer:
     def _build_review_prompt(self, pr_title: str, pr_body: str, diff_text: str, rules: LoadedRules, parsed_diff: Optional[ParsedDiff] = None) -> str:
         formatted_rules = rules.format_for_prompt()
 
-        # Strictness mode instruction
-        strictness_mode = (getattr(self.config, "strictness", None) or "standard").lower()
-        if strictness_mode == "bugs-only":
-            strictness_instruction = "### STRICTNESS LEVEL: BUGS ONLY\nFocus EXCLUSIVELY on CRITICAL functional bugs, logic errors, dedicated server crashes (side safety), and severe performance regressions. Suppress minor style/naming nitpicks."
-        elif strictness_mode == "style-only":
-            strictness_instruction = "### STRICTNESS LEVEL: STYLE & CONVENTIONS ONLY\nFocus on naming conventions, code layout, formatting, DRY principles, and architectural style guidelines."
-        elif strictness_mode == "strict":
-            strictness_instruction = "### STRICTNESS LEVEL: MAXIMUM STRICTNESS\nEnforce ALL architectural rules, null safety, types, and naming conventions with zero tolerance."
-        else:
-            strictness_instruction = "### STRICTNESS LEVEL: STANDARD\nPrioritize critical bugs and side-safety issues first, followed by architectural conventions and notable style breaches."
-
         full_files_context = []
         if parsed_diff and parsed_diff.files:
             for file_path, lines_set in list(parsed_diff.files.items())[:15]:
@@ -310,8 +299,6 @@ class TommiReviewer:
         return f"""
 You are Thomas Glasser (@thomasglasser), an expert Minecraft/NeoForge mod developer, architect, and strict code reviewer.
 You are reviewing a Pull Request in one of your repositories.
-
-{strictness_instruction}
 
 ### YOUR CODE STANDARDS & EXPECTATIONS:
 {formatted_rules}

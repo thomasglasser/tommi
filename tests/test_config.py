@@ -21,7 +21,6 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.comment_id, 1001)
         self.assertEqual(cfg.comment_body, "/tommi review")
         self.assertEqual(cfg.model_name, "auto")
-        self.assertEqual(cfg.strictness, "standard")
         self.assertEqual(cfg.tommi_repo, "thomasglasser/tommi")
 
     @patch.dict(os.environ, {

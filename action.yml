@@ -26,10 +26,6 @@ inputs:
     description: 'Gemini model to use for analysis (default: auto - automatically discovers the newest Flash model)'
     required: false
     default: 'auto'
-  strictness:
-    description: 'Review strictness mode (standard, strict, style-only, bugs-only)'
-    required: false
-    default: 'standard'
   tommi-repo:
     description: 'Repository name where central TOMMI rules are hosted'
     required: false
@@ -59,7 +55,6 @@ runs:
         PRIVATE_KEY: ${{ inputs.private-key }}
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
         MODEL_NAME: ${{ inputs.model }}
-        STRICTNESS: ${{ inputs.strictness }}
         TOMMI_REPO: ${{ inputs.tommi-repo }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
