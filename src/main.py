@@ -65,6 +65,17 @@ def main():
                 commenter.post_issue_comment(response_msg)
             return
 
+        if "/tommi help" in comment_body or comment_body == "/tommi":
+            help_msg = (
+                "🤖 **T.O.M.M.I. AI Assistant Commands**\n\n"
+                "• `/tommi review` or `/review` — Run automated code review against this PR\n"
+                "• `/tommi false-positive <explanation>` — Report an inaccurate review comment to refine rules\n"
+                "• `/tommi learn <rule>` — Teach a new coding standard or architectural rule\n"
+                "• `/tommi help` — Display this command reference"
+            )
+            commenter.reply_to_comment(help_msg)
+            return
+
         if "/tommi learn" in comment_body or "/tommi false-positive" in comment_body:
             # Learning / Feedback Mode
             if "/tommi learn" in comment_body:
@@ -121,8 +132,8 @@ def main():
             commenter.add_reaction("hooray")
             logger.info("Successfully processed learning feedback.")
 
-        elif "/tommi review" in comment_body or "/review" in comment_body:
-            # Code Review Mode
+        elif "/tommi review" in comment_body or "/review" in comment_body or config.event_name == "pull_request":
+            # Code Review Mode (Comment or Automatic on PR Event)
             reviewer = TommiReviewer(config=config, auth_token=target_token)
             comments = reviewer.review_pr(
                 pr_title=pr.title,

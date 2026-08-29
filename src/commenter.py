@@ -44,16 +44,72 @@ class GitHubCommenter:
 
     def post_review_comments(self, comments: List[dict]) -> None:
         """
-        Posts review comments to the PR. Attempts inline placement first,
-        collecting any failed comments into a fallback comment.
+        Posts review comments to the PR using GitHub's Batch Review API in a single HTTP request.
+        Falls back to individual comment posting if batch submission encounters validation errors.
         """
         if not comments:
             logger.info("No comments to post.")
             return
 
         latest_commit = self.get_latest_commit()
-        unplaced_comments = []
+
+        # Count severities
+        critical_count = sum(1 for c in comments if c.get("severity") == "CRITICAL")
+        warning_count = sum(1 for c in comments if c.get("severity") == "WARNING")
+        suggestion_count = sum(1 for c in comments if c.get("severity") == "SUGGESTION")
+
+        scorecard_parts = []
+        if critical_count:
+            scorecard_parts.append(f"🚨 **{critical_count} Critical**")
+        if warning_count:
+            scorecard_parts.append(f"⚠️ **{warning_count} Warning{'s' if warning_count != 1 else ''}**")
+        if suggestion_count:
+            scorecard_parts.append(f"💡 **{suggestion_count} Suggestion{'s' if suggestion_count != 1 else ''}**")
+
+        scorecard_str = " | ".join(scorecard_parts) if scorecard_parts else "✨ Clean"
+        summary_header = (
+            f"### 🤖 T.O.M.M.I. Code Review\n\n"
+            f"**Review Findings**: {scorecard_str}\n\n"
+            f"Please review the inline feedback below. For suggestions with code blocks, you can apply them directly."
+        )
+
+        # Build batch comments payload
+        batch_comments = []
+        for item in comments:
+            path = item.get("path")
+            line = item.get("line")
+            body = item.get("body")
+            severity = item.get("severity", "WARNING")
+
+            if not path or not line or not body:
+                continue
+
+            severity_prefix = f"**[{severity}]** "
+            formatted_body = body if body.startswith(severity_prefix) or body.startswith(f"[{severity}]") else f"{severity_prefix}{body}"
+
+            batch_comments.append({
+                "path": path,
+                "line": int(line),
+                "body": formatted_body,
+                "side": "RIGHT"
+            })
+
+        # 1. Try Batch Review Submission (1 API Call)
+        try:
+            self.pr.create_review(
+                commit=latest_commit,
+                body=summary_header,
+                comments=batch_comments,
+                event="COMMENT"
+            )
+            logger.info(f"Successfully posted batch review with {len(batch_comments)} inline comment(s).")
+            return
+        except GithubException as batch_err:
+            logger.warning(f"Batch review creation failed ({batch_err.data.get('message', str(batch_err))}), falling back to individual comments...")
+
+        # 2. Fallback: Post comments individually if batch review fails
         placed_count = 0
+        unplaced_comments = []
 
         for item in comments:
             path = item.get("path")
@@ -64,31 +120,32 @@ class GitHubCommenter:
             if not path or not line or not body:
                 continue
 
+            severity_prefix = f"**[{severity}]** "
+            formatted_body = body if body.startswith(severity_prefix) or body.startswith(f"[{severity}]") else f"{severity_prefix}{body}"
+
             try:
                 self.pr.create_review_comment(
-                    body=body,
+                    body=formatted_body,
                     commit=latest_commit,
                     path=path,
-                    line=line,
+                    line=int(line),
                     side="RIGHT"
                 )
                 placed_count += 1
                 logger.info(f"Posted inline comment [{severity}] on {path}:{line}")
             except GithubException as e:
                 logger.warning(f"Could not post inline comment on {path}:{line}: {e.data.get('message', str(e))}")
-                severity_tag = f"[{severity}] " if severity else ""
-                unplaced_comments.append(f"- **`{path}:{line}`** {severity_tag}: {body}")
+                unplaced_comments.append(f"- **`{path}:{line}`** [{severity}]: {body}")
 
+        # Post top-level summary / unplaced comments
+        fallback_body = summary_header
         if unplaced_comments:
-            fallback_body = (
-                "### 🔍 T.O.M.M.I. Additional Review Notes\n"
-                "I couldn't attach the following comments directly to specific diff lines, but please review them:\n\n"
+            fallback_body += (
+                "\n\n**Additional Review Notes** (unable to place inline):\n"
                 + "\n".join(unplaced_comments)
             )
-            self.pr.create_issue_comment(fallback_body)
-            logger.info(f"Posted fallback comment with {len(unplaced_comments)} notes.")
-
-        logger.info(f"Review completed: {placed_count} inline comments posted, {len(unplaced_comments)} fallbacks.")
+        self.pr.create_issue_comment(fallback_body)
+        logger.info(f"Fallback review completed: {placed_count} inline comments posted, {len(unplaced_comments)} unplaced.")
 
     def post_issue_comment(self, body: str) -> None:
         """Posts a general comment on the PR / Issue thread."""

@@ -1,6 +1,33 @@
+import os
 import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
+
+IGNORED_DIFF_EXTENSIONS = {
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".webp",
+    ".jar", ".zip", ".gz", ".tar", ".bin",
+    ".lock", ".lockfile", ".map", ".min.js", ".min.css",
+}
+
+IGNORED_DIFF_PATTERNS = [
+    r"gradle\.lockfile$",
+    r"package-lock\.json$",
+    r"yarn\.lock$",
+    r"pnpm-lock\.yaml$",
+    r"assets/[^/]+/lang/[^/]+\.json$",
+]
+
+
+def is_reviewable_file(file_path: str) -> bool:
+    """Returns True if the file should be reviewed by AI."""
+    clean_path = file_path.replace("\\", "/").strip()
+    ext = os.path.splitext(clean_path)[1].lower()
+    if ext in IGNORED_DIFF_EXTENSIONS:
+        return False
+    for pat in IGNORED_DIFF_PATTERNS:
+        if re.search(pat, clean_path, re.IGNORECASE):
+            return False
+    return True
 
 
 @dataclass
@@ -28,12 +55,14 @@ class ParsedDiff:
         return min(valid_lines, key=lambda l: abs(l - target_line))
 
 
-def parse_unified_diff(diff_text: str) -> ParsedDiff:
+def parse_unified_diff(diff_text: str, filter_non_code: bool = True) -> ParsedDiff:
     """
     Parses a unified diff and extracts all valid new line numbers (RIGHT side) for each modified file.
+    Optionally filters out lockfiles, non-code assets, and translations.
     """
     files: Dict[str, Set[int]] = {}
     current_file: Optional[str] = None
+    is_current_file_reviewable = True
     current_new_line = 0
 
     hunk_header_re = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -48,10 +77,15 @@ def parse_unified_diff(diff_text: str) -> ParsedDiff:
                     current_file = b_path[2:]
                 else:
                     current_file = b_path
-                files[current_file] = set()
+
+                is_current_file_reviewable = not filter_non_code or is_reviewable_file(current_file)
+                if is_current_file_reviewable:
+                    files[current_file] = set()
+                else:
+                    current_file = None
             continue
 
-        if current_file is None:
+        if current_file is None or not is_current_file_reviewable:
             continue
 
         # Check for hunk header
@@ -73,3 +107,33 @@ def parse_unified_diff(diff_text: str) -> ParsedDiff:
             pass
 
     return ParsedDiff(files=files, raw_diff=diff_text)
+
+
+def filter_diff_for_review(diff_text: str) -> str:
+    """
+    Strips non-code and ignored file sections from unified diff to minimize token consumption.
+    """
+    filtered_chunks = []
+    current_chunk = []
+    include_current = True
+
+    for line in diff_text.splitlines():
+        if line.startswith("diff --git "):
+            if current_chunk and include_current:
+                filtered_chunks.append("\n".join(current_chunk))
+            current_chunk = [line]
+            parts = line.split(" ")
+            if len(parts) >= 4:
+                b_path = parts[3]
+                path = b_path[2:] if b_path.startswith("b/") else b_path
+                include_current = is_reviewable_file(path)
+            else:
+                include_current = True
+        else:
+            if current_chunk is not None:
+                current_chunk.append(line)
+
+    if current_chunk and include_current:
+        filtered_chunks.append("\n".join(current_chunk))
+
+    return "\n".join(filtered_chunks)

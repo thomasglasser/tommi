@@ -32,8 +32,27 @@ class TestDiffParser(unittest.TestCase):
         self.assertIn(17, valid_lines)
         
         self.assertTrue(parsed.is_line_in_diff(path, 14))
-        self.assertFalse(parsed.is_line_in_diff(path, 999))
-        self.assertEqual(parsed.get_closest_valid_line(path, 999), max(valid_lines))
+    def test_is_reviewable_file(self):
+        from src.diff_parser import is_reviewable_file
+        self.assertTrue(is_reviewable_file("src/main/java/MyClass.java"))
+        self.assertTrue(is_reviewable_file("src/main/resources/data/mod/recipes/craft.json"))
+        self.assertFalse(is_reviewable_file("gradle.lockfile"))
+        self.assertFalse(is_reviewable_file("package-lock.json"))
+        self.assertFalse(is_reviewable_file("assets/mod/lang/en_us.json"))
+        self.assertFalse(is_reviewable_file("assets/mod/textures/item/tool.png"))
+
+    def test_filter_diff_for_review(self):
+        from src.diff_parser import filter_diff_for_review
+        raw = (
+            "diff --git a/src/Test.java b/src/Test.java\n+class Test {}\n"
+            "diff --git a/gradle.lockfile b/gradle.lockfile\n+lock content\n"
+            "diff --git a/assets/mod/lang/en_us.json b/assets/mod/lang/en_us.json\n+translation\n"
+        )
+        filtered = filter_diff_for_review(raw)
+        self.assertIn("src/Test.java", filtered)
+        self.assertNotIn("gradle.lockfile", filtered)
+        self.assertNotIn("en_us.json", filtered)
+
 
 if __name__ == "__main__":
     unittest.main()

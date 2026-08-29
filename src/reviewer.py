@@ -8,7 +8,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from src.config import TommiConfig
-from src.diff_parser import parse_unified_diff, ParsedDiff
+from src.diff_parser import parse_unified_diff, ParsedDiff, filter_diff_for_review
 from src.rules_loader import load_all_rules, LoadedRules
 from src.models_resolver import resolve_candidate_models, resolve_model_name
 from src.repo_tools import WorkspaceInspector
@@ -215,16 +215,17 @@ class TommiReviewer:
         logger.info(f"Fetching PR #{self.config.pr_number} diff...")
         diff_text = self.fetch_pr_diff(pr_url)
 
-        if not diff_text.strip():
-            logger.info("PR diff is empty. Nothing to review.")
+        filtered_diff = filter_diff_for_review(diff_text)
+        if not filtered_diff.strip():
+            logger.info("PR diff contains no reviewable code files. Nothing to review.")
             return []
 
-        parsed_diff = parse_unified_diff(diff_text)
+        parsed_diff = parse_unified_diff(filtered_diff)
         rules = load_all_rules()
         candidate_models = resolve_candidate_models(self.client, self.config.model_name)
 
         logger.info(f"Loaded rules ({len(rules.base_rules)} base modules, {len(rules.local_rules)} local files).")
-        prompt = self._build_review_prompt(pr_title, pr_body, diff_text, rules, parsed_diff=parsed_diff)
+        prompt = self._build_review_prompt(pr_title, pr_body, filtered_diff, rules, parsed_diff=parsed_diff)
 
         comments_data = None
         last_error = None
@@ -284,6 +285,17 @@ class TommiReviewer:
     def _build_review_prompt(self, pr_title: str, pr_body: str, diff_text: str, rules: LoadedRules, parsed_diff: Optional[ParsedDiff] = None) -> str:
         formatted_rules = rules.format_for_prompt()
 
+        # Strictness mode instruction
+        strictness_mode = (getattr(self.config, "strictness", None) or "standard").lower()
+        if strictness_mode == "bugs-only":
+            strictness_instruction = "### STRICTNESS LEVEL: BUGS ONLY\nFocus EXCLUSIVELY on CRITICAL functional bugs, logic errors, dedicated server crashes (side safety), and severe performance regressions. Suppress minor style/naming nitpicks."
+        elif strictness_mode == "style-only":
+            strictness_instruction = "### STRICTNESS LEVEL: STYLE & CONVENTIONS ONLY\nFocus on naming conventions, code layout, formatting, DRY principles, and architectural style guidelines."
+        elif strictness_mode == "strict":
+            strictness_instruction = "### STRICTNESS LEVEL: MAXIMUM STRICTNESS\nEnforce ALL architectural rules, null safety, types, and naming conventions with zero tolerance."
+        else:
+            strictness_instruction = "### STRICTNESS LEVEL: STANDARD\nPrioritize critical bugs and side-safety issues first, followed by architectural conventions and notable style breaches."
+
         full_files_context = []
         if parsed_diff and parsed_diff.files:
             for file_path, lines_set in list(parsed_diff.files.items())[:15]:
@@ -298,6 +310,8 @@ class TommiReviewer:
         return f"""
 You are Thomas Glasser (@thomasglasser), an expert Minecraft/NeoForge mod developer, architect, and strict code reviewer.
 You are reviewing a Pull Request in one of your repositories.
+
+{strictness_instruction}
 
 ### YOUR CODE STANDARDS & EXPECTATIONS:
 {formatted_rules}
@@ -332,19 +346,23 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 3. **SUGGESTION**:
    - Minor code style, naming conventions (abbreviations, non-descriptive variable names), class layout ordering, dead code, single-use variables needing inlining, or javadoc formatting.
 
-### INSTRUCTIONS:
+### INSTRUCTIONS & SUGGESTION FORMAT:
 1. Review the entire diff thoroughly and comprehensively. Do NOT artificially limit or truncate the number of comments—report ALL genuine violations, bugs, side-safety issues, performance regressions, and style breaches found across all modified files and hunks.
 2. ALWAYS prioritize reporting critical bugs, side-safety crashes, and performance issues before reporting cosmetic style/naming nitpicks.
 3. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-4. Do NOT leave generic praise or comment on valid, unchanged code.
-5. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
-6. Each object must have:
+4. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
+   ```suggestion
+   exact replacement code
+   ```
+5. Do NOT leave generic praise or comment on valid, unchanged code.
+6. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+7. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment.
-7. If there are no issues found, return an empty array `[]`.
-8. Return ONLY the raw JSON array.
+8. If there are no issues found, return an empty array `[]`.
+9. Return ONLY the raw JSON array.
 """
 
     def _validate_comments(self, raw_comments: List[Dict[str, Any]], parsed_diff: ParsedDiff) -> List[Dict[str, Any]]:

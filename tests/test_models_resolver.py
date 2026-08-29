@@ -15,17 +15,14 @@ class TestModelsResolver(unittest.TestCase):
         candidates = resolve_candidate_models(client, configured_model="gemini-custom-model")
         self.assertEqual(candidates, ["gemini-custom-model"])
 
-    def test_auto_dynamic_discovery(self):
+    def test_auto_defaults_to_3_7_flash(self):
         client = MagicMock()
-        client.models.list.return_value = [
-            MockModel("models/gemini-1.5-flash"),
-            MockModel("models/gemini-2.0-flash"),
-            MockModel("models/gemini-3.7-flash"),
-            MockModel("models/text-embedding-004"),
-        ]
-
         resolved = resolve_model_name(client, configured_model="auto")
         self.assertEqual(resolved, "gemini-3.7-flash")
+
+        candidates = resolve_candidate_models(client, configured_model="auto")
+        self.assertEqual(candidates[0], "gemini-3.7-flash")
+        self.assertIn("gemini-2.5-flash", candidates)
 
 if __name__ == "__main__":
     unittest.main()
