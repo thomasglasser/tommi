@@ -123,12 +123,10 @@ class TommiReviewer:
             gen_config = types.GenerateContentConfig(
                 temperature=0.15,
                 max_output_tokens=65536,
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             )
             if tools_list:
                 gen_config.tools = tools_list
-                gen_config.automatic_function_calling = types.AutomaticFunctionCallingConfig(
-                    disable=True
-                )
 
             response = self.client.models.generate_content(
                 model=model_name,
@@ -204,6 +202,7 @@ class TommiReviewer:
         final_config = types.GenerateContentConfig(
             temperature=0.15,
             max_output_tokens=65536,
+            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
         final_response = self.client.models.generate_content(
             model=model_name,

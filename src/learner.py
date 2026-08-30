@@ -76,6 +76,7 @@ class TommiLearner:
                             temperature=0.1,
                             response_mime_type="application/json",
                             max_output_tokens=65536,
+                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                         )
                     )
                     break
