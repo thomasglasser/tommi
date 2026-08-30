@@ -38,3 +38,5 @@
 * **Pay Attention to IDE Warnings**: Never ignore yellow/red IDE warnings (e.g., comparing `ResourceKey` to `ResourceLocation`).
 * **Self-Review**: Contributors MUST review their own PR diff before requesting review.
 * **Complete Fixes**: Do not mark review comments as resolved without actually fixing the underlying issue.
+* **Trust the Compiler**: All pull requests are verified to compile cleanly with javac/Gradle prior to review. NEVER report compilation errors, syntax errors, duplicate method/field declarations, or missing imports. Do not mistake a method call in an expression for a duplicate declaration.
+* **Accurate Unused Parameter Checks**: NEVER claim a parameter or variable is unused without inspecting the entire method body, including event bus postings (`NeoForge.EVENT_BUS.post(...)`), constructor arguments, method calls, and lambda closures.

@@ -364,20 +364,22 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 ### INSTRUCTIONS & SUGGESTION FORMAT:
 1. Review the entire diff thoroughly and comprehensively. Do NOT artificially limit or truncate the number of comments—report ALL genuine violations, bugs, side-safety issues, performance regressions, and style breaches found across all modified files and hunks.
 2. ALWAYS prioritize reporting critical bugs, side-safety crashes, and performance issues before reporting cosmetic style/naming nitpicks.
-3. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-4. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
+3. **Trust Compiler & Build Verification**: All PRs are verified to compile and build cleanly via Gradle prior to review. NEVER claim there are compilation errors, syntax errors, duplicate method/field definitions, or missing types that the Java compiler would reject. If you think a method is defined twice, you are misreading a method invocation (e.g. inside an `if` condition) or an overload. Do NOT flag compiler errors.
+4. **Verify Full Method Scope for Variables**: NEVER report a parameter or variable as unused unless you have traced the entire method body and confirmed it is completely unreferenced. Check event postings (`NeoForge.EVENT_BUS.post(...)`), constructor arguments, method calls, lambda closures, and return values before alleging an unused parameter.
+5. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
+6. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
    ```suggestion
    exact replacement code
    ```
-5. Do NOT leave generic praise or comment on valid, unchanged code.
-6. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
-7. Each object must have:
+7. Do NOT leave generic praise or comment on valid, unchanged code.
+8. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+9. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment.
-8. If there are no issues found, return an empty array `[]`.
-9. Return ONLY the raw JSON array.
+10. If there are no issues found, return an empty array `[]`.
+11. Return ONLY the raw JSON array.
 """
 
     def _validate_comments(self, raw_comments: List[Dict[str, Any]], parsed_diff: ParsedDiff) -> List[Dict[str, Any]]:
