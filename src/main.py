@@ -17,26 +17,26 @@ from typing import Optional, Tuple
 
 def extract_tommi_command(body: str, is_inline_reply: bool = False) -> Optional[Tuple[str, str]]:
     """
-    Parses a comment body to look for explicit /tommi or /review slash commands.
+    Parses a comment body to look for explicit /tommi slash commands.
     Returns (command_type, argument_text) or None if no command was invoked.
     """
     lines = [line.strip() for line in body.splitlines() if line.strip()]
     for line in lines:
-        if line.startswith(("/tommi", "/review")):
+        if line.startswith("/tommi"):
             lower_line = line.lower()
             if lower_line in ("/tommi", "/tommi help") or lower_line.startswith("/tommi help"):
                 return ("help", "")
-            elif lower_line in ("/tommi review", "/review") or lower_line.startswith(("/tommi review ", "/review ")):
+            elif lower_line == "/tommi review" or lower_line.startswith("/tommi review "):
                 return ("review", "")
             elif lower_line.startswith("/tommi learn"):
                 return ("learn", line[12:].strip())
             elif lower_line.startswith("/tommi false-positive"):
                 return ("false-positive", line[21:].strip())
-            elif is_inline_reply and line.startswith("/tommi"):
+            elif is_inline_reply:
                 # Natural feedback reply directly on an inline review comment
                 feedback = line.split("/tommi", 1)[1].strip().lstrip(":, -")
                 return ("false-positive", feedback)
-            elif line.startswith("/tommi"):
+            else:
                 return ("unrecognized", line)
     return None
 
@@ -129,7 +129,7 @@ def main():
         if cmd_type == "help":
             help_msg = (
                 "🤖 **T.O.M.M.I. AI Assistant Commands**\n\n"
-                "• `/tommi review` or `/review` — Run automated code review against this PR\n"
+                "• `/tommi review` — Run automated code review against this PR\n"
                 "• `/tommi false-positive <explanation>` — Report an inaccurate review comment to refine rules\n"
                 "• `/tommi learn <rule>` — Teach a new coding standard or architectural rule\n"
                 "• `/tommi help` — Display this command reference"
@@ -207,7 +207,7 @@ def main():
         elif cmd_type == "unrecognized":
             help_msg = (
                 "🤖 **T.O.M.M.I. AI Assistant Commands**\n\n"
-                "• `/tommi review` or `/review` — Run automated code review against this PR\n"
+                "• `/tommi review` — Run automated code review against this PR\n"
                 "• `/tommi false-positive <explanation>` — Report an inaccurate review comment to refine rules\n"
                 "• `/tommi learn <rule>` — Teach a new coding standard or architectural rule\n"
                 "• `/tommi help` — Display this command reference"

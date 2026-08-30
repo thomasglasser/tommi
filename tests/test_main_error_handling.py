@@ -190,6 +190,23 @@ class TestMainErrorHandling(unittest.TestCase):
         mock_commenter.reply_to_comment.assert_not_called()
         mock_commenter.post_issue_comment.assert_not_called()
 
+    def test_extract_tommi_command_strict_prefixes(self):
+        from src.main import extract_tommi_command
+
+        # Valid commands
+        self.assertEqual(extract_tommi_command("/tommi review"), ("review", ""))
+        self.assertEqual(extract_tommi_command("/tommi help"), ("help", ""))
+        self.assertEqual(extract_tommi_command("/tommi learn Never do X"), ("learn", "Never do X"))
+        self.assertEqual(extract_tommi_command("/tommi false-positive Not a bug"), ("false-positive", "Not a bug"))
+        self.assertEqual(extract_tommi_command("/tommi This is feedback", is_inline_reply=True), ("false-positive", "This is feedback"))
+
+        # Ignored non-commands (URLs, mentions, help text lines, /review shortcut removed)
+        self.assertIsNone(extract_tommi_command("https://github.com/thomasglasser/tommi/pull/9"))
+        self.assertIsNone(extract_tommi_command("Please check thomasglasser/tommi repo for updates."))
+        self.assertIsNone(extract_tommi_command("• /tommi review — Run automated review"))
+        self.assertIsNone(extract_tommi_command("/review"))
+        self.assertIsNone(extract_tommi_command("LGTM!"))
+
 
 if __name__ == "__main__":
     unittest.main()
