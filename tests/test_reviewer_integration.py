@@ -366,7 +366,7 @@ index 1111111..2222222 100644
             mock_client.models.generate_content.side_effect = [resp_turn1, resp_turn2]
 
             reviewer = TommiReviewer(config)
-            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1", enable_tools=True)
 
             self.assertEqual(len(comments), 1)
             self.assertEqual(comments[0]["body"], "Do not use var")
@@ -415,7 +415,7 @@ index 1111111..2222222 100644
             reviewer = TommiReviewer(config)
             # MUST raise HighDemandException rather than returning [] or masking the error
             with self.assertRaises(HighDemandException):
-                reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+                reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1", enable_tools=True)
 
     @patch("src.reviewer.requests.get")
     def test_tool_budget_exhaustion_synthesizes_final_turn(self, mock_requests_get):
@@ -462,7 +462,7 @@ index 1111111..2222222 100644
             ]
 
             reviewer = TommiReviewer(config)
-            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1", enable_tools=True)
             self.assertEqual(len(comments), 1)
             self.assertEqual(comments[0]["body"], "Synthesized after 3 tool turns")
             self.assertEqual(mock_client.models.generate_content.call_count, 4)

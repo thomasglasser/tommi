@@ -212,7 +212,7 @@ class TommiReviewer:
         )
         return final_response.text.strip() if final_response and final_response.text else ""
 
-    def review_pr(self, pr_title: str, pr_body: str, pr_url: str) -> List[Dict[str, Any]]:
+    def review_pr(self, pr_title: str, pr_body: str, pr_url: str, enable_tools: bool = False) -> List[Dict[str, Any]]:
         """
         Executes code review analysis on the pull request with transient error retry and model candidate failover.
         """
@@ -229,7 +229,7 @@ class TommiReviewer:
         candidate_models = resolve_candidate_models(self.client, self.config.model_name)
 
         logger.info(f"Loaded rules ({len(rules.base_rules)} base modules, {len(rules.local_rules)} local files).")
-        prompt = self._build_review_prompt(pr_title, pr_body, filtered_diff, rules, parsed_diff=parsed_diff)
+        prompt = self._build_review_prompt(pr_title, pr_body, filtered_diff, rules, parsed_diff=parsed_diff, enable_tools=enable_tools)
 
         comments_data = None
         last_error = None
@@ -242,8 +242,8 @@ class TommiReviewer:
             max_attempts = 2
 
             for attempt in range(max_attempts):
-                # Attempt 1 tries with tools; attempt 2 (retry after error/rate limit) runs direct generation without tools
-                use_tools = (attempt == 0)
+                # Only use tools on attempt 0 if explicitly enabled; retry attempt always disables tools
+                use_tools = enable_tools if attempt == 0 else False
                 try:
                     raw_json = self._execute_review_generation(model_name, prompt, enable_tools=use_tools)
                     comments_data = self._parse_and_repair_json(raw_json)
@@ -265,7 +265,7 @@ class TommiReviewer:
                             backoff_sec = (attempt + 1) * 5
                             logger.warning(
                                 f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'} on attempt {attempt + 1}. "
-                                f"Backing off for {backoff_sec}s before retrying without tools..."
+                                f"Backing off for {backoff_sec}s before retrying..."
                             )
                             time.sleep(backoff_sec)
                             continue
@@ -299,7 +299,15 @@ class TommiReviewer:
         validated_comments = self._validate_comments(comments_data, parsed_diff)
         return validated_comments
 
-    def _build_review_prompt(self, pr_title: str, pr_body: str, diff_text: str, rules: LoadedRules, parsed_diff: Optional[ParsedDiff] = None) -> str:
+    def _build_review_prompt(
+        self,
+        pr_title: str,
+        pr_body: str,
+        diff_text: str,
+        rules: LoadedRules,
+        parsed_diff: Optional[ParsedDiff] = None,
+        enable_tools: bool = False
+    ) -> str:
         formatted_rules = rules.format_for_prompt()
 
         full_files_context = []
@@ -312,6 +320,17 @@ class TommiReviewer:
         full_files_section = ""
         if full_files_context:
             full_files_section = "### MODIFIED FILES SURROUNDING SOURCE CODE (from checked-out repository):\n" + "\n\n".join(full_files_context) + "\n\n"
+
+        tools_section = ""
+        if enable_tools:
+            tools_section = """### REPOSITORY CODE TRACING INSTRUCTIONS & TOOLS:
+You have access to workspace inspection tools (`read_file`, `search_codebase`, `find_files`, `get_symbol_definition`) to search, trace, and read files in the repository workspace.
+- **Surrounding Context Already Provided**: The surrounding source code for all modified files is already provided above in the 'MODIFIED FILES SURROUNDING SOURCE CODE' section. Do NOT make redundant tool calls to re-read files already shown above.
+- **Trace External Contracts**: If code in the PR calls external methods, data attachments, helpers, or classes across the codebase whose declarations are not in the diff or surrounding code, use tools (`get_symbol_definition` or `search_codebase`) to check their definitions.
+- **Never Guess Return Types & Contracts**: Do NOT assume a method returns null, is a simple getter, or does not instantiate data (e.g. `get()` methods often act as `getOrCreate` in Minecraft mods). Look up the method definition first!
+- **Verify Units**: Verify whether time values, cooldowns, or durations use ticks (via `SharedConstants.TICKS_PER_SECOND`) or other units in the referenced classes.
+
+"""
 
         return f"""
 You are Thomas Glasser (@thomasglasser), an expert Minecraft/NeoForge mod developer, architect, and strict code reviewer.
@@ -329,14 +348,7 @@ You are reviewing a Pull Request in one of your repositories.
 {diff_text}
 ```
 
-### REPOSITORY CODE TRACING INSTRUCTIONS & TOOLS:
-You have access to workspace inspection tools (`read_file`, `search_codebase`, `find_files`, `get_symbol_definition`) to search, trace, and read files in the repository workspace.
-- **Surrounding Context Already Provided**: The surrounding source code for all modified files is already provided above in the 'MODIFIED FILES SURROUNDING SOURCE CODE' section. Do NOT make redundant tool calls to re-read files already shown above.
-- **Trace External Contracts**: If code in the PR calls external methods, data attachments, helpers, or classes across the codebase whose declarations are not in the diff or surrounding code, use tools (`get_symbol_definition` or `search_codebase`) to check their definitions.
-- **Never Guess Return Types & Contracts**: Do NOT assume a method returns null, is a simple getter, or does not instantiate data (e.g. `get()` methods often act as `getOrCreate` in Minecraft mods). Look up the method definition first!
-- **Verify Units**: Verify whether time values, cooldowns, or durations use ticks (via `SharedConstants.TICKS_PER_SECOND`) or other units in the referenced classes.
-
-### REVIEW PRIORITIZATION & SEVERITY TRIAGE:
+{tools_section}### REVIEW PRIORITIZATION & SEVERITY TRIAGE:
 Evaluate every file and changed line thoroughly across the entire diff. Prioritize issues according to this hierarchy:
 1. **CRITICAL**:
    - Functional bugs, logic flaws, broken math, or incorrect state mutations.
