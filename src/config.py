@@ -20,6 +20,8 @@ class TommiConfig:
     file_path: str = ""
     event_name: str = ""
     is_merged: bool = False
+    comment_author: str = ""
+    comment_author_type: str = ""
 
     @classmethod
     def from_env(cls) -> "TommiConfig":
@@ -43,6 +45,8 @@ class TommiConfig:
         comment_id_str = os.environ.get("COMMENT_ID", "").strip()
         comment_id = int(comment_id_str) if comment_id_str.isdigit() else None
         comment_body = os.environ.get("COMMENT_BODY", "").strip()
+        comment_author = os.environ.get("COMMENT_AUTHOR", "").strip()
+        comment_author_type = os.environ.get("COMMENT_AUTHOR_TYPE", "").strip()
 
         in_reply_to_id_str = os.environ.get("IN_REPLY_TO_ID", "").strip()
         in_reply_to_id = int(in_reply_to_id_str) if in_reply_to_id_str.isdigit() else None
@@ -72,4 +76,6 @@ class TommiConfig:
             file_path=file_path,
             event_name=event_name,
             is_merged=is_merged,
+            comment_author=comment_author,
+            comment_author_type=comment_author_type,
         )

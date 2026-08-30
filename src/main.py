@@ -13,12 +13,51 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger("tommi")
 
 
+from typing import Optional, Tuple
+
+def extract_tommi_command(body: str, is_inline_reply: bool = False) -> Optional[Tuple[str, str]]:
+    """
+    Parses a comment body to look for explicit /tommi or /review slash commands.
+    Returns (command_type, argument_text) or None if no command was invoked.
+    """
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    for line in lines:
+        if line.startswith(("/tommi", "/review")):
+            lower_line = line.lower()
+            if lower_line in ("/tommi", "/tommi help") or lower_line.startswith("/tommi help"):
+                return ("help", "")
+            elif lower_line in ("/tommi review", "/review") or lower_line.startswith(("/tommi review ", "/review ")):
+                return ("review", "")
+            elif lower_line.startswith("/tommi learn"):
+                return ("learn", line[12:].strip())
+            elif lower_line.startswith("/tommi false-positive"):
+                return ("false-positive", line[21:].strip())
+            elif is_inline_reply and line.startswith("/tommi"):
+                # Natural feedback reply directly on an inline review comment
+                feedback = line.split("/tommi", 1)[1].strip().lstrip(":, -")
+                return ("false-positive", feedback)
+            elif line.startswith("/tommi"):
+                return ("unrecognized", line)
+    return None
+
+
 def main():
+    # Setup logging
+    logger.info("Starting T.O.M.M.I. Autonomous Engine...")
+
+    # Load configuration
     try:
         config = TommiConfig.from_env()
     except Exception as e:
         logger.error(f"Configuration error: {e}")
         sys.exit(1)
+
+    # 0. Safety Guard: Never respond to bot comments to prevent recursive feedback loops
+    author_type = config.comment_author_type.lower() if isinstance(config.comment_author_type, str) else ""
+    author_name = config.comment_author.lower() if isinstance(config.comment_author, str) else ""
+    if author_type == "bot" or author_name.endswith("[bot]"):
+        logger.info(f"Ignoring comment from bot author '{config.comment_author}' ({config.comment_author_type}). Aborting.")
+        return
 
     auth_manager = GitHubAuthManager(
         token=config.github_token,
@@ -35,13 +74,33 @@ def main():
         comment_id=config.comment_id,
     )
 
+    pr = commenter.pr
+
+    if config.comment_id and not (config.event_name == "pull_request" and config.is_merged):
+        try:
+            target_comment = pr.get_issue_comment(config.comment_id) if config.event_name == "issue_comment" else pr.get_comment(config.comment_id)
+            if target_comment and target_comment.user:
+                u_type = target_comment.user.type if isinstance(target_comment.user.type, str) else ""
+                u_login = target_comment.user.login if isinstance(target_comment.user.login, str) else ""
+                if u_type.lower() == "bot" or u_login.lower().endswith("[bot]"):
+                    logger.info(f"Comment #{config.comment_id} was authored by bot user '{u_login}'. Aborting.")
+                    return
+        except Exception as err:
+            logger.debug(f"Could not verify comment user type via GitHub API: {err}")
+
+    # Determine command invocation
+    is_inline_reply = bool(config.in_reply_to_id)
+    cmd_info = extract_tommi_command(config.comment_body, is_inline_reply=is_inline_reply)
+
+    # If triggered by a comment event but no /tommi or /review command was invoked, do nothing
+    if config.event_name in ("issue_comment", "pull_request_review_comment", "pull_request_review") and cmd_info is None:
+        logger.info("Comment or review body does not invoke a /tommi slash command. Nothing to do.")
+        return
+
     # 1. Acknowledge the request with 👀 reaction
     commenter.add_reaction("eyes")
 
-    comment_body = config.comment_body.strip()
-    pr = commenter.pr
-
-    # 2. Determine action based on event and comment
+    # 2. Determine action based on event and command
     try:
         if config.event_name == "pull_request" and config.is_merged:
             # Post-Merge Review Learning Mode
@@ -65,7 +124,9 @@ def main():
                 commenter.post_issue_comment(response_msg)
             return
 
-        if "/tommi help" in comment_body or comment_body == "/tommi":
+        cmd_type, cmd_arg = cmd_info if cmd_info else ("", "")
+
+        if cmd_type == "help":
             help_msg = (
                 "🤖 **T.O.M.M.I. AI Assistant Commands**\n\n"
                 "• `/tommi review` or `/review` — Run automated code review against this PR\n"
@@ -76,22 +137,8 @@ def main():
             commenter.reply_to_comment(help_msg)
             return
 
-        is_explicit_learn = "/tommi learn" in comment_body
-        is_explicit_fp = "/tommi false-positive" in comment_body
-        is_inline_reply_feedback = bool(config.in_reply_to_id and ("/tommi" in comment_body) and not ("/tommi review" in comment_body or "/review" in comment_body))
-
-        if is_explicit_learn or is_explicit_fp or is_inline_reply_feedback:
-            # Learning / Feedback Mode
-            if is_explicit_learn:
-                cmd_type = "learn"
-                feedback_text = comment_body.split("/tommi learn", 1)[1].strip()
-            elif is_explicit_fp:
-                cmd_type = "false-positive"
-                feedback_text = comment_body.split("/tommi false-positive", 1)[1].strip()
-            else:
-                cmd_type = "false-positive"
-                feedback_text = comment_body.split("/tommi", 1)[1].strip().lstrip(":, -")
-
+        if cmd_type in ("learn", "false-positive"):
+            feedback_text = cmd_arg
             if not feedback_text:
                 commenter.reply_to_comment(
                     "⚠️ Please provide feedback or a rule description after `/tommi` (e.g. `/tommi <explanation>` or `/tommi learn <rule>`)."
@@ -139,7 +186,7 @@ def main():
             commenter.add_reaction("hooray")
             logger.info("Successfully processed learning feedback.")
 
-        elif "/tommi review" in comment_body or "/review" in comment_body or config.event_name == "pull_request":
+        elif cmd_type == "review" or config.event_name == "pull_request":
             # Code Review Mode (Comment or Automatic on PR Event)
             reviewer = TommiReviewer(config=config, auth_token=target_token)
             comments = reviewer.review_pr(
@@ -157,8 +204,7 @@ def main():
                 commenter.post_review_comments(comments)
                 commenter.add_reaction("rocket")
 
-        elif "/tommi" in comment_body:
-            # Unrecognized command with /tommi prefix -> show help
+        elif cmd_type == "unrecognized":
             help_msg = (
                 "🤖 **T.O.M.M.I. AI Assistant Commands**\n\n"
                 "• `/tommi review` or `/review` — Run automated code review against this PR\n"

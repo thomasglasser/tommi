@@ -58,6 +58,8 @@ runs:
         PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
         COMMENT_ID: ${{ github.event.comment.id }}
         COMMENT_BODY: ${{ github.event.comment.body }}
+        COMMENT_AUTHOR: ${{ github.event.comment.user.login || github.event.review.user.login || github.actor || '' }}
+        COMMENT_AUTHOR_TYPE: ${{ github.event.comment.user.type || github.event.review.user.type || '' }}
         IN_REPLY_TO_ID: ${{ github.event.comment.in_reply_to_id || '' }}
         DIFF_HUNK: ${{ github.event.comment.diff_hunk || '' }}
         FILE_PATH: ${{ github.event.comment.path || '' }}

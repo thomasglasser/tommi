@@ -35,11 +35,11 @@ on:
 
 jobs:
   tommi:
-    # Trigger on PR comments/reviews containing /tommi OR when a PR is merged
+    # Trigger on human comments/reviews containing /tommi OR when a PR is merged
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
-      (contains(github.event.comment.body, '/tommi')) ||
-      (contains(github.event.review.body, '/tommi'))
+      ((github.event.comment.user.type != 'Bot' && github.event.review.user.type != 'Bot' && !endsWith(github.actor, '[bot]')) &&
+       (contains(github.event.comment.body, '/tommi') || contains(github.event.review.body, '/tommi')))
     runs-on: ubuntu-latest
     permissions:
       contents: write
