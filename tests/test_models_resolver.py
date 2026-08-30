@@ -22,7 +22,7 @@ class TestModelsResolver(unittest.TestCase):
 
         candidates = resolve_candidate_models(client, configured_model="auto")
         self.assertEqual(candidates[0], "gemini-3.7-flash")
-        self.assertIn("gemini-2.5-flash", candidates)
+        self.assertIn("gemini-3.5-flash", candidates)
 
 if __name__ == "__main__":
     unittest.main()

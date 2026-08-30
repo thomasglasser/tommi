@@ -126,6 +126,9 @@ class TommiReviewer:
             )
             if tools_list:
                 gen_config.tools = tools_list
+                gen_config.automatic_function_calling = types.AutomaticFunctionCallingConfig(
+                    disable=True
+                )
 
             response = self.client.models.generate_content(
                 model=model_name,
@@ -194,6 +197,7 @@ class TommiReviewer:
                 contents.append(types.Content(role="model", parts=[types.Part.from_function_call(name=fc.name, args=getattr(fc, "args", {})) for fc in function_calls]))
 
             contents.append(types.Content(role="user", parts=tool_response_parts))
+            time.sleep(1)
 
         # If tool budget reached, make one final generation turn without tools to synthesize review
         logger.info("Tool budget reached. Requesting final review synthesis...")
@@ -229,6 +233,8 @@ class TommiReviewer:
 
         comments_data = None
         last_error = None
+        encountered_429 = False
+        encountered_503 = False
 
         for i, model_name in enumerate(candidate_models):
             logger.info(f"Running Gemini review with model '{model_name}'...")
@@ -236,8 +242,10 @@ class TommiReviewer:
             max_attempts = 2
 
             for attempt in range(max_attempts):
+                # Attempt 1 tries with tools; attempt 2 (retry after error/rate limit) runs direct generation without tools
+                use_tools = (attempt == 0)
                 try:
-                    raw_json = self._execute_review_generation(model_name, prompt, enable_tools=True)
+                    raw_json = self._execute_review_generation(model_name, prompt, enable_tools=use_tools)
                     comments_data = self._parse_and_repair_json(raw_json)
                     model_succeeded = True
                     break
@@ -245,14 +253,19 @@ class TommiReviewer:
                     error_str = str(e).lower()
                     last_error = e
                     is_503 = "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str
-                    is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str
+                    is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str or "rate limit" in error_str or "too many requests" in error_str
+
+                    if is_503:
+                        encountered_503 = True
+                    if is_429:
+                        encountered_429 = True
 
                     if is_503 or is_429:
                         if attempt < max_attempts - 1:
-                            backoff_sec = (attempt + 1) * 3
+                            backoff_sec = (attempt + 1) * 5
                             logger.warning(
                                 f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'} on attempt {attempt + 1}. "
-                                f"Backing off for {backoff_sec}s before retry..."
+                                f"Backing off for {backoff_sec}s before retrying without tools..."
                             )
                             time.sleep(backoff_sec)
                             continue
@@ -261,20 +274,24 @@ class TommiReviewer:
                             break
                     else:
                         logger.warning(f"Generation or JSON parsing failed with model '{model_name}': {e}")
+                        if attempt < max_attempts - 1:
+                            time.sleep(2)
+                            continue
                         break
 
             if model_succeeded and comments_data is not None:
                 break
             elif i < len(candidate_models) - 1:
+                if encountered_429 or encountered_503:
+                    time.sleep(3)
                 logger.info(f"Failing over to next candidate model '{candidate_models[i + 1]}'...")
 
         if comments_data is None:
-            if last_error:
-                err_str = str(last_error).lower()
-                if "503" in err_str or "high demand" in err_str or "unavailable" in err_str or "overloaded" in err_str:
-                    raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.") from last_error
-                elif "429" in err_str or "quota" in err_str or "exhausted" in err_str or "resourceexhausted" in err_str:
-                    raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota for today. Please try again later.") from last_error
+            if encountered_429:
+                raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota / rate limit. Please try again later.")
+            elif encountered_503:
+                raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.")
+            elif last_error:
                 raise RuntimeError(f"Failed to generate or parse AI review response: {last_error}") from last_error
             raise RuntimeError("Failed to obtain response from Gemini API.")
 

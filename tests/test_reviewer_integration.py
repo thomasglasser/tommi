@@ -87,7 +87,7 @@ index 1111111..2222222 100644
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
-             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash", "gemini-2.0-flash"]), \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash", "gemini-3.6-flash"]), \
              patch("src.reviewer.time.sleep") as mock_sleep:
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
@@ -105,7 +105,7 @@ index 1111111..2222222 100644
             comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
             self.assertEqual(comments, [])
             self.assertEqual(mock_client.models.generate_content.call_count, 3)
-            mock_sleep.assert_called_once()
+            self.assertTrue(mock_sleep.called)
 
     @patch("src.reviewer.requests.get")
     def test_review_pr_all_high_demand(self, mock_requests_get):
@@ -244,23 +244,23 @@ index 1111111..2222222 100644
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
-             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash", "gemini-2.0-flash"]):
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash", "gemini-3.6-flash"]):
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
 
-            # First candidate returns unparseable garbage, second returns valid JSON
+            # First candidate returns unparseable garbage on both attempts, second returns valid JSON
             resp1 = MagicMock()
             resp1.text = "This is total garbage not JSON at all."
             resp2 = MagicMock()
             resp2.text = '[{"path": "src/Test.java", "line": 1, "body": "Fixed", "severity": "WARNING"}]'
 
-            mock_client.models.generate_content.side_effect = [resp1, resp2]
+            mock_client.models.generate_content.side_effect = [resp1, resp1, resp2]
 
             reviewer = TommiReviewer(config)
             comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
             self.assertEqual(len(comments), 1)
             self.assertEqual(comments[0]["body"], "Fixed")
-            self.assertEqual(mock_client.models.generate_content.call_count, 2)
+            self.assertEqual(mock_client.models.generate_content.call_count, 3)
 
     @patch("src.reviewer.requests.get")
     def test_review_pr_fallback_on_schema_error(self, mock_requests_get):
@@ -278,11 +278,11 @@ index 1111111..2222222 100644
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
-             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash", "gemini-2.0-flash"]):
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash", "gemini-3.6-flash"]):
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
 
-            # First attempt throws Unsupported schema type, second succeeds with plain JSON
+            # First attempt throws Unsupported schema type, retries on same model and succeeds
             resp2 = MagicMock()
             resp2.text = '[{"path": "src/Test.java", "line": 1, "body": "Fixed after schema fallback", "severity": "WARNING"}]'
 

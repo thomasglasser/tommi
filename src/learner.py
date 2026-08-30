@@ -61,6 +61,9 @@ class TommiLearner:
         candidate_models = resolve_candidate_models(self.client, self.config.model_name)
         response = None
         last_error = None
+        encountered_429 = False
+        encountered_503 = False
+
         for i, model_name in enumerate(candidate_models):
             logger.info(f"Running Gemini learning generation with model '{model_name}'...")
             max_attempts = 2
@@ -80,11 +83,16 @@ class TommiLearner:
                     error_str = str(e).lower()
                     last_error = e
                     is_503 = "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str
-                    is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str
+                    is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str or "rate limit" in error_str or "too many requests" in error_str
+
+                    if is_503:
+                        encountered_503 = True
+                    if is_429:
+                        encountered_429 = True
 
                     if is_503 or is_429:
                         if attempt < max_attempts - 1:
-                            backoff_sec = (attempt + 1) * 3
+                            backoff_sec = (attempt + 1) * 5
                             logger.warning(
                                 f"Learner model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'} on attempt {attempt + 1}. "
                                 f"Backing off for {backoff_sec}s before retry..."
@@ -101,11 +109,17 @@ class TommiLearner:
             if response:
                 break
             elif i < len(candidate_models) - 1:
+                if encountered_429 or encountered_503:
+                    time.sleep(3)
                 logger.info(f"Retrying with fallback model '{candidate_models[i + 1]}'...")
 
         if not response:
-            if last_error:
-                raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.") from last_error
+            if encountered_429:
+                raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota / rate limit for today.")
+            elif encountered_503:
+                raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.")
+            elif last_error:
+                raise RuntimeError(f"Failed to generate AI learning response: {last_error}") from last_error
             raise RuntimeError("Failed to obtain response from Gemini API.")
 
         return response.text
