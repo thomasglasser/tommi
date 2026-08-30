@@ -9,6 +9,8 @@
 
 ## 2. Layout & Structure
 
+* **Method Organization**: Keep method placement clean and navigable. Do NOT strictly enforce visibility order (e.g. public before private); helper, protected, or private methods may be placed directly below where they are used or organized logically for readability.
+
 * **Compound Condition Branching**: Do NOT flag condition checks in `else` or `else if` branches as redundant when the preceding `if` statement uses a compound boolean condition (e.g., `&&` or `||`); entering the `else` branch only implies that the overall condition evaluated to false, not which specific sub-condition failed.
 
 * **Local Classes in Methods**: Do NOT flag local classes declared inside methods when used for lambda workarounds or local context as misplaced inner classes.
