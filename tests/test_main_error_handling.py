@@ -106,6 +106,64 @@ class TestMainErrorHandling(unittest.TestCase):
         self.assertIn("Commands", mock_commenter.reply_to_comment.call_args[0][0])
         self.assertIn("/tommi review", mock_commenter.reply_to_comment.call_args[0][0])
 
+    @patch("src.main.TommiLearner")
+    @patch("src.main.GitHubCommenter")
+    @patch("src.main.GitHubAuthManager")
+    @patch("src.main.TommiConfig.from_env")
+    @patch("src.main.TommiReviewer")
+    def test_main_handles_inline_reply_feedback(self, mock_reviewer_cls, mock_from_env, mock_auth_cls, mock_commenter_cls, mock_learner_cls):
+        mock_config = MagicMock()
+        mock_config.event_name = "pull_request_review_comment"
+        mock_config.is_merged = False
+        mock_config.comment_body = "/tommi this is actually safe because Context#level() is a ServerLevel"
+        mock_config.github_repository = "test/repo"
+        mock_config.pr_number = 1
+        mock_config.comment_id = 123
+        mock_config.in_reply_to_id = 456
+        mock_config.file_path = "src/Test.java"
+        mock_config.diff_hunk = "@@ -1 +1 @@"
+        mock_from_env.return_value = mock_config
+
+        mock_commenter = MagicMock()
+        mock_commenter_cls.return_value = mock_commenter
+
+        mock_learner = MagicMock()
+        mock_learner.process_feedback.return_value = {
+            "pr_url": "https://github.com/thomasglasser/tommi/pull/99",
+            "learning_plan": {"summary": "Clarify Context#level returns ServerLevel"}
+        }
+        mock_learner_cls.return_value = mock_learner
+
+        main()
+
+        mock_learner.process_feedback.assert_called_once()
+        self.assertEqual(mock_learner.process_feedback.call_args[1]["command_type"], "false-positive")
+        self.assertIn("ServerLevel", mock_learner.process_feedback.call_args[1]["feedback_text"])
+        mock_commenter.reply_to_comment.assert_called_once()
+        self.assertIn("Feedback Processed", mock_commenter.reply_to_comment.call_args[0][0])
+
+    @patch("src.main.GitHubCommenter")
+    @patch("src.main.GitHubAuthManager")
+    @patch("src.main.TommiConfig.from_env")
+    def test_main_handles_unrecognized_tommi_command_with_help(self, mock_from_env, mock_auth_cls, mock_commenter_cls):
+        mock_config = MagicMock()
+        mock_config.event_name = "issue_comment"
+        mock_config.is_merged = False
+        mock_config.comment_body = "/tommi unknown-argument"
+        mock_config.github_repository = "test/repo"
+        mock_config.pr_number = 1
+        mock_config.comment_id = 123
+        mock_config.in_reply_to_id = None
+        mock_from_env.return_value = mock_config
+
+        mock_commenter = MagicMock()
+        mock_commenter_cls.return_value = mock_commenter
+
+        main()
+
+        mock_commenter.reply_to_comment.assert_called_once()
+        self.assertIn("Commands", mock_commenter.reply_to_comment.call_args[0][0])
+
 
 if __name__ == "__main__":
     unittest.main()

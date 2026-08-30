@@ -76,18 +76,25 @@ def main():
             commenter.reply_to_comment(help_msg)
             return
 
-        if "/tommi learn" in comment_body or "/tommi false-positive" in comment_body:
+        is_explicit_learn = "/tommi learn" in comment_body
+        is_explicit_fp = "/tommi false-positive" in comment_body
+        is_inline_reply_feedback = bool(config.in_reply_to_id and ("/tommi" in comment_body) and not ("/tommi review" in comment_body or "/review" in comment_body))
+
+        if is_explicit_learn or is_explicit_fp or is_inline_reply_feedback:
             # Learning / Feedback Mode
-            if "/tommi learn" in comment_body:
+            if is_explicit_learn:
                 cmd_type = "learn"
                 feedback_text = comment_body.split("/tommi learn", 1)[1].strip()
-            else:
+            elif is_explicit_fp:
                 cmd_type = "false-positive"
                 feedback_text = comment_body.split("/tommi false-positive", 1)[1].strip()
+            else:
+                cmd_type = "false-positive"
+                feedback_text = comment_body.split("/tommi", 1)[1].strip().lstrip(":, -")
 
             if not feedback_text:
-                commenter.post_issue_comment(
-                    "⚠️ Please provide feedback or a rule description after `/tommi learn` or `/tommi false-positive`."
+                commenter.reply_to_comment(
+                    "⚠️ Please provide feedback or a rule description after `/tommi` (e.g. `/tommi <explanation>` or `/tommi learn <rule>`)."
                 )
                 return
 
@@ -149,6 +156,17 @@ def main():
                 logger.info(f"Posting {len(comments)} review comments...")
                 commenter.post_review_comments(comments)
                 commenter.add_reaction("rocket")
+
+        elif "/tommi" in comment_body:
+            # Unrecognized command with /tommi prefix -> show help
+            help_msg = (
+                "🤖 **T.O.M.M.I. AI Assistant Commands**\n\n"
+                "• `/tommi review` or `/review` — Run automated code review against this PR\n"
+                "• `/tommi false-positive <explanation>` — Report an inaccurate review comment to refine rules\n"
+                "• `/tommi learn <rule>` — Teach a new coding standard or architectural rule\n"
+                "• `/tommi help` — Display this command reference"
+            )
+            commenter.reply_to_comment(help_msg)
 
         else:
             logger.info("No recognizable TOMMI command in comment body.")
