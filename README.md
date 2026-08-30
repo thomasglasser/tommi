@@ -25,12 +25,21 @@ name: T.O.M.M.I. Code Reviewer
 
 on:
   issue_comment:
-    types: [created]
+    types: [created, edited]
+  pull_request_review_comment:
+    types: [created, edited]
+  pull_request_review:
+    types: [submitted, edited]
+  pull_request:
+    types: [closed]
 
 jobs:
   tommi:
-    # Trigger on PR comments containing /tommi
-    if: github.event.issue.pull_request && contains(github.event.comment.body, '/tommi')
+    # Trigger on PR comments/reviews containing /tommi OR when a PR is merged
+    if: |
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
+      (contains(github.event.comment.body, '/tommi')) ||
+      (contains(github.event.review.body, '/tommi'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -41,17 +50,11 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Generate GitHub App Token
-        id: generate-token
-        uses: actions/create-github-app-token@v1
-        with:
-          app-id: ${{ secrets.TOMMI_APP_ID }}
-          private-key: ${{ secrets.TOMMI_PRIVATE_KEY }}
-
       - name: Run T.O.M.M.I.
         uses: thomasglasser/tommi@main
         with:
-          github-token: ${{ steps.generate-token.outputs.token }}
+          app-id: ${{ secrets.TOMMI_APP_ID }}
+          private-key: ${{ secrets.TOMMI_PRIVATE_KEY }}
           gemini-api-key: ${{ secrets.GEMINI_API_KEY }}
 ```
 
