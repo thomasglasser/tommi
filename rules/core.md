@@ -8,6 +8,8 @@
 * **Pluralization**: Be accurate with plurals (e.g., `miraculouses`, `options` instead of `option` for collections).
 
 ## 2. Layout & Structure
+
+* **Local Classes in Methods**: Do NOT flag local classes declared inside methods when used for lambda workarounds or local context as misplaced inner classes.
 * **Logical Ordering**:
   * ALWAYS group related items logically and consistently.
 * **Class Layout**:
