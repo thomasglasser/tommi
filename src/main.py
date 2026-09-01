@@ -145,6 +145,30 @@ def main():
                 )
                 return
 
+            # Verify that comment author has write access to the central TOMMI rules repository
+            tommi_g = auth_manager.get_client_for_repo(config.tommi_repo)
+            tommi_repo = tommi_g.get_repo(config.tommi_repo)
+
+            has_write_access = False
+            if config.comment_author and isinstance(config.comment_author, str):
+                try:
+                    owner_login = tommi_repo.owner.login if hasattr(tommi_repo.owner, "login") and isinstance(tommi_repo.owner.login, str) else ""
+                    if owner_login.lower() == config.comment_author.lower():
+                        has_write_access = True
+                    else:
+                        perm = tommi_repo.get_collaborator_permission(config.comment_author)
+                        if isinstance(perm, str) and perm.lower() in ("admin", "write", "maintain"):
+                            has_write_access = True
+                except Exception as perm_err:
+                    logger.warning(f"Could not verify write permissions for '{config.comment_author}' on '{config.tommi_repo}': {perm_err}")
+
+            if not has_write_access:
+                logger.warning(f"Unauthorized feedback attempt by '{config.comment_author}' (no write access to '{config.tommi_repo}').")
+                commenter.reply_to_comment(
+                    f"🔒 **Permission Denied**: Modifying rules or reporting false positives requires write access to the central rules repository (`{config.tommi_repo}`). You can still use `/tommi review` to review this PR."
+                )
+                return
+
             reviewer_instance = TommiReviewer(config=config, auth_token=target_token)
             diff_text = reviewer_instance.fetch_pr_diff(pr.url)
 
