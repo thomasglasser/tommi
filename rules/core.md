@@ -30,6 +30,8 @@
 * **Spacing**: Avoid unnecessary blank lines. Keep closely related logic tightly grouped.
 
 ## 3. Code Cleanliness & DRY
+
+* **Field & Method Access (`this.`)**: Do NOT flag `this.` prefixes on field or method accesses when resolving variable shadowing or naming collisions with local variables or method parameters.
 * **Inlining**: Inline variables and methods that are only used once or merely wrap a single call.
 * **DRY (Don't Repeat Yourself)**: Extract duplicated logic into parent classes or utility methods.
 * **No Redundant Overrides**: If an overridden method only calls `super.method()`, remove the override entirely.
