@@ -9,6 +9,10 @@
 
 ## 2. Layout & Structure
 
+* **Static Factory & Builder Placement**:
+  * Static builder accessors (e.g., `builder()`) may be placed directly above the nested builder class/record definition.
+  * Static factory/constructing helpers (e.g., `of(...)`, `perching(...)`, `create(...)`) MUST be placed directly below the constructors and before instance methods.
+
 * **Method Organization**: Keep method placement clean and navigable. Do NOT strictly enforce visibility order (e.g. public before private); helper, protected, or private methods may be placed directly below where they are used or organized logically for readability.
 
 * **Compound Condition Branching**: Do NOT flag condition checks in `else` or `else if` branches as redundant when the preceding `if` statement uses a compound boolean condition (e.g., `&&` or `||`); entering the `else` branch only implies that the overall condition evaluated to false, not which specific sub-condition failed.
