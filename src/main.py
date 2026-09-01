@@ -259,6 +259,15 @@ def main():
             logger.warning(f"Quota error: {e}")
             quota_msg = "😴 **T.O.M.M.I. is resting:** I've run out of AI API quota for today. Please try again tomorrow."
             commenter.reply_to_comment(quota_msg)
+        elif "authentication available for repository" in error_str or "could not get app installation token" in error_str or "504" in error_str or "gateway" in error_str:
+            logger.error(f"GitHub authentication / connectivity error: {e}")
+            auth_msg = (
+                f"⚠️ **T.O.M.M.I. GitHub Connection Error:** Unable to authenticate or communicate with the rules repository (`{config.tommi_repo}`). "
+                "GitHub's API may be experiencing downtime or gateway timeouts. Please try running your command again in a moment."
+            )
+            commenter.reply_to_comment(auth_msg)
+            commenter.add_reaction("confused")
+            sys.exit(1)
         else:
             logger.error(f"Error during execution: {e}", exc_info=True)
             commenter.add_reaction("confused")
