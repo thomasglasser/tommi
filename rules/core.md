@@ -26,6 +26,8 @@
 * **Spacing**: Avoid unnecessary blank lines. Keep closely related logic tightly grouped.
 
 ## 3. Code Cleanliness & DRY
+
+* **`this.` Prefix Usage**: Do NOT flag or suggest removing `this.` prefixes on method calls or field references; `this.` is used intentionally throughout the codebase and in vanilla class overrides.
 * **Inlining**: Inline variables and methods that are only used once or merely wrap a single call.
 * **DRY (Don't Repeat Yourself)**: Extract duplicated logic into parent classes or utility methods.
 * **No Redundant Overrides**: If an overridden method only calls `super.method()`, remove the override entirely.
