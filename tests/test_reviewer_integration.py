@@ -467,6 +467,90 @@ index 1111111..2222222 100644
             self.assertEqual(comments[0]["body"], "Synthesized after 3 tool turns")
             self.assertEqual(mock_client.models.generate_content.call_count, 4)
 
+    def test_validate_comments_realigns_drifted_line_and_indents_suggestion(self):
+        from src.diff_parser import parse_unified_diff
+        diff_text = """diff --git a/src/KwamiUtils.java b/src/KwamiUtils.java
+index 1111111..2222222 100644
+--- a/src/KwamiUtils.java
++++ b/src/KwamiUtils.java
+@@ -185,15 +185,15 @@
+      public static void discardKwami(ServerLevel level, @Nullable ItemStack miraculousStack, @Nullable UUID miraculousIdFallback) {
+          UUID kwamiId = miraculousStack != null ? KwamiBond.get(miraculousStack).kwamiIdOrNull() : null;
++        UUID miraculousId = Optional.ofNullable(miraculousStack).map(stack -> stack.get(MineraculousDataComponents.MIRACULOUS_ID)).orElse(miraculousIdFallback);
+          severBond(level, miraculousStack, miraculousId, kwamiId, findKwamiLike(level, kwamiId, miraculousId));
+      }
+ 
+      /**
+       * Finds a kwami sitting on a shoulder, where it is out of the world and so cannot be searched for like any other.
+       * <p>
++     * Shoulders belong to anything shaped like a player, so {@link PlayerLike}s are looked over along with the players
+       * themselves.
+       */
+"""
+        parsed_diff = parse_unified_diff(diff_text)
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto"
+        )
+        reviewer = TommiReviewer(config)
+
+        raw_comments = [
+            {
+                "path": "src/KwamiUtils.java",
+                "line": 194, # Drifted line number (Javadoc line instead of line 187)
+                "target_code": "UUID miraculousId = Optional.ofNullable(miraculousStack)",
+                "body": (
+                    "[SUGGESTION] Avoid allocating an Optional wrapper here; use a ternary check consistent with the line above.\n"
+                    "```suggestion\n"
+                    "UUID miraculousId = miraculousStack != null ? miraculousStack.get(MineraculousDataComponents.MIRACULOUS_ID) : miraculousIdFallback;\n"
+                    "```"
+                ),
+                "severity": "SUGGESTION"
+            }
+        ]
+
+        validated = reviewer._validate_comments(raw_comments, parsed_diff)
+        self.assertEqual(len(validated), 1)
+        # Verify the line was realigned to line 187 where Optional.ofNullable actually resides
+        self.assertEqual(validated[0]["line"], 187)
+        # Verify indentation was aligned to the 8 leading spaces of the target line
+        self.assertIn("        UUID miraculousId = miraculousStack != null", validated[0]["body"])
+
+    def test_validate_comments_converts_suggestion_to_code_block_if_outside_diff(self):
+        from src.diff_parser import parse_unified_diff
+        diff_text = """diff --git a/src/Test.java b/src/Test.java
+@@ -1,3 +1,3 @@
++int x = 1;
+"""
+        parsed_diff = parse_unified_diff(diff_text)
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto"
+        )
+        reviewer = TommiReviewer(config)
+
+        raw_comments = [
+            {
+                "path": "src/Test.java",
+                "line": 250, # Far outside diff range
+                "target_code": None,
+                "body": "```suggestion\nint x = 2;\n```",
+                "severity": "SUGGESTION"
+            }
+        ]
+
+        validated = reviewer._validate_comments(raw_comments, parsed_diff)
+        self.assertEqual(len(validated), 1)
+        # Suggestion block must be converted to java code block to prevent corrupting unrelated line
+        self.assertNotIn("```suggestion", validated[0]["body"])
+        self.assertIn("```java", validated[0]["body"])
+
 
 if __name__ == "__main__":
     unittest.main()

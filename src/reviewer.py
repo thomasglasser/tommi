@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 from typing import List, Dict, Any, Optional
 import requests
@@ -8,7 +9,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from src.config import TommiConfig
-from src.diff_parser import parse_unified_diff, ParsedDiff, filter_diff_for_review
+from src.diff_parser import parse_unified_diff, ParsedDiff, filter_diff_for_review, format_annotated_diff
 from src.rules_loader import load_all_rules, LoadedRules
 from src.models_resolver import resolve_candidate_models, resolve_model_name
 from src.repo_tools import WorkspaceInspector
@@ -18,8 +19,9 @@ logger = logging.getLogger("tommi.reviewer")
 
 class ReviewCommentItem(BaseModel):
     path: str = Field(description="The exact relative file path of the file being reviewed (matching the b/ path in diff).")
-    line: int = Field(description="The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs.")
+    line: int = Field(description="The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. Read this directly from the line prefix in the annotated diff.")
     severity: str = Field(default="WARNING", description="Severity of the issue: CRITICAL, WARNING, or SUGGESTION.")
+    target_code: Optional[str] = Field(default=None, description="The exact single line of code or distinctive snippet from the diff being targeted.")
     body: str = Field(description="The review comment explaining the issue and how to resolve it.")
 
 
@@ -228,7 +230,8 @@ class TommiReviewer:
         candidate_models = resolve_candidate_models(self.client, self.config.model_name)
 
         logger.info(f"Loaded rules ({len(rules.base_rules)} base modules, {len(rules.local_rules)} local files).")
-        prompt = self._build_review_prompt(pr_title, pr_body, filtered_diff, rules, parsed_diff=parsed_diff, enable_tools=enable_tools)
+        annotated_diff = format_annotated_diff(filtered_diff)
+        prompt = self._build_review_prompt(pr_title, pr_body, annotated_diff, rules, parsed_diff=parsed_diff, enable_tools=enable_tools)
 
         comments_data = None
         last_error = None
@@ -342,7 +345,7 @@ You are reviewing a Pull Request in one of your repositories.
 - **Title**: {pr_title}
 - **Description**: {pr_body or '(No description provided)'}
 
-{full_files_section}### PULL REQUEST DIFF:
+{full_files_section}### PULL REQUEST DIFF (Annotated with target line numbers on left):
 ```diff
 {diff_text}
 ```
@@ -375,12 +378,44 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 8. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
 9. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
-   - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs.
+   - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. **CRITICAL**: Read the line number directly from the line prefix in the annotated diff (e.g. `  189: + ...` or `  190:   ...`). Do NOT count or estimate line numbers.
+   - `target_code`: The exact line or distinctive snippet of code from the diff that this comment targets.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment.
 10. If there are no issues found, return an empty array `[]`.
 11. Return ONLY the raw JSON array.
 """
+
+    def _align_suggestion_indentation(self, body: str, path: str, line: int, parsed_diff: ParsedDiff) -> str:
+        """
+        Ensures that code inside ```suggestion ... ``` matches the leading indentation
+        of the target line in the diff.
+        """
+        target_indent = parsed_diff.get_line_indent(path, line)
+        if not target_indent:
+            return body
+
+        pattern = re.compile(r"```suggestion\r?\n(.*?)\r?\n```", re.DOTALL)
+
+        def _replace_block(match: re.Match) -> str:
+            raw_code = match.group(1)
+            lines = raw_code.splitlines()
+            if not lines:
+                return match.group(0)
+
+            non_empty = [l for l in lines if l.strip()]
+            if not non_empty:
+                return match.group(0)
+
+            min_sugg_indent = min(len(l) - len(l.lstrip()) for l in non_empty)
+            if min_sugg_indent >= len(target_indent):
+                return match.group(0)
+
+            missing_indent = target_indent[min_sugg_indent:]
+            indented_lines = [(missing_indent + l if l.strip() else "") for l in lines]
+            return f"```suggestion\n{chr(10).join(indented_lines)}\n```"
+
+        return pattern.sub(_replace_block, body)
 
     def _validate_comments(self, raw_comments: List[Dict[str, Any]], parsed_diff: ParsedDiff) -> List[Dict[str, Any]]:
         severity_rank = {
@@ -394,6 +429,7 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
             path = item.get("path")
             line = item.get("line")
             body = item.get("body")
+            target_code = item.get("target_code")
             raw_sev = str(item.get("severity", "WARNING")).strip().upper()
             severity = raw_sev if raw_sev in severity_rank else "WARNING"
 
@@ -406,11 +442,37 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
             except (ValueError, TypeError):
                 continue
 
-            # If line is in diff, keep as is. Otherwise find closest line in diff hunk.
-            if not parsed_diff.is_line_in_diff(path, line):
-                closest = parsed_diff.get_closest_valid_line(path, line)
+            # 1. Target code verification & line realignment
+            extracted_target = target_code
+            if not extracted_target:
+                # Try to extract code snippet from backticks in comment body
+                backtick_matches = re.findall(r"`([^`]{8,})`", body)
+                if backtick_matches:
+                    extracted_target = backtick_matches[0]
+
+            if extracted_target:
+                matched_line = parsed_diff.find_matching_line(path, extracted_target, preferred_line=line)
+                if matched_line and matched_line != line:
+                    logger.info(f"Realigned comment on '{path}' from line {line} to line {matched_line} (matched '{extracted_target[:40]}...')")
+                    line = matched_line
+
+            # 2. Strict line-in-diff validation
+            is_valid_line = parsed_diff.is_line_in_diff(path, line)
+            if not is_valid_line:
+                closest = parsed_diff.get_closest_valid_line(path, line, max_distance=3)
                 if closest is not None:
                     line = closest
+                    is_valid_line = True
+                else:
+                    # Line is far outside the diff hunks. If comment includes a ```suggestion, convert it to
+                    # a standard code block so it cannot corrupt unrelated lines when posted.
+                    if "```suggestion" in body:
+                        body = body.replace("```suggestion", "```java")
+                        logger.warning(f"Comment on '{path}:{line}' is outside diff range; converted suggestion block to regular code block.")
+
+            # 3. Indentation alignment for GitHub 1-click suggestions
+            if is_valid_line and "```suggestion" in body:
+                body = self._align_suggestion_indentation(body, path, line, parsed_diff)
 
             validated.append({
                 "path": path,
