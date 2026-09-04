@@ -514,7 +514,7 @@ index 1111111..2222222 100644
 
         validated = reviewer._validate_comments(raw_comments, parsed_diff)
         self.assertEqual(len(validated), 1)
-        # Verify the line was realigned to line 187 where Optional.ofNullable actually resides
+        # Verify the line was realigned to line 187 where Optional.ofNullable actually resides in this diff
         self.assertEqual(validated[0]["line"], 187)
         # Verify indentation was aligned to the 8 leading spaces of the target line
         self.assertIn("        UUID miraculousId = miraculousStack != null", validated[0]["body"])

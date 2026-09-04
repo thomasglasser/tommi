@@ -86,16 +86,19 @@ class ParsedDiff:
             c = content_str.strip()
             if not c:
                 return False
-            if first_line_target in c or c in first_line_target:
+            if first_line_target in c:
                 return True
-            ct_bare = first_line_target.rstrip(";{}(),.")
-            c_bare = c.rstrip(";{}(),.")
-            if ct_bare and (ct_bare in c_bare or c_bare in ct_bare):
+            if len(c) >= 5 and c in first_line_target:
                 return True
+            ct_bare = first_line_target.rstrip(";{}(),.").strip()
+            c_bare = c.rstrip(";{}(),.").strip()
+            if len(ct_bare) >= 3 and len(c_bare) >= 3:
+                if ct_bare in c_bare or c_bare in ct_bare:
+                    return True
             if "=" in first_line_target and "=" in c:
                 left_target = first_line_target.split("=")[0].strip()
                 left_c = c.split("=")[0].strip()
-                if left_target and left_target == left_c:
+                if len(left_target) >= 3 and left_target == left_c:
                     return True
             return False
 
