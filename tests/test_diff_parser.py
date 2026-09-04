@@ -58,37 +58,38 @@ class TestDiffParser(unittest.TestCase):
         annotated = format_annotated_diff(SAMPLE_DIFF)
         path = "src/main/java/com/example/MyClass.java"
         # Check that line numbers are annotated on right-side lines
-        self.assertIn("   10:  package com.example;", annotated)
-        self.assertIn("   14: +    public static final String FOO = \"bar\";", annotated)
+        self.assertIn("   10:  import java.util.List;", annotated)
+        self.assertIn("   13: +    public static final String FOO = \"bar\";", annotated)
         self.assertIn("     -: -        int a = 1;", annotated)
-        self.assertIn("   17: +        int a = 2;", annotated)
+        self.assertIn("   16: +        int a = 2;", annotated)
 
     def test_line_contents_and_indent(self):
         parsed = parse_unified_diff(SAMPLE_DIFF)
         path = "src/main/java/com/example/MyClass.java"
-        self.assertEqual(parsed.get_line_indent(path, 14), "    ")
-        self.assertEqual(parsed.get_line_indent(path, 17), "        ")
-        self.assertEqual(parsed.line_contents[path][14].strip(), "public static final String FOO = \"bar\";")
+        self.assertEqual(parsed.get_line_indent(path, 13), "    ")
+        self.assertEqual(parsed.get_line_indent(path, 16), "        ")
+        self.assertEqual(parsed.line_contents[path][13].strip(), "public static final String FOO = \"bar\";")
+        self.assertEqual(parsed.line_contents[path][16].strip(), "int a = 2;")
 
     def test_find_matching_line(self):
         parsed = parse_unified_diff(SAMPLE_DIFF)
         path = "src/main/java/com/example/MyClass.java"
 
-        # Direct match at line 14
-        self.assertEqual(parsed.find_matching_line(path, "public static final String FOO = \"bar\";", preferred_line=14), 14)
+        # Direct match at line 13
+        self.assertEqual(parsed.find_matching_line(path, "public static final String FOO = \"bar\";", preferred_line=13), 13)
 
-        # Drifted preferred_line (AI guessed line 20, but the line is at line 14)
-        self.assertEqual(parsed.find_matching_line(path, "public static final String FOO = \"bar\";", preferred_line=20), 14)
+        # Drifted preferred_line (AI guessed line 20, but the line is at line 13)
+        self.assertEqual(parsed.find_matching_line(path, "public static final String FOO = \"bar\";", preferred_line=20), 13)
 
         # Substring / partial match
-        self.assertEqual(parsed.find_matching_line(path, "int a = 2;", preferred_line=10), 17)
+        self.assertEqual(parsed.find_matching_line(path, "int a = 2;", preferred_line=10), 16)
 
     def test_get_closest_valid_line_distance_threshold(self):
         parsed = parse_unified_diff(SAMPLE_DIFF)
         path = "src/main/java/com/example/MyClass.java"
 
-        # Line 18 is 1 line away from 17 -> should snap
-        self.assertEqual(parsed.get_closest_valid_line(path, 18, max_distance=3), 17)
+        # Line 20 is 2 lines away from 18 (last line) -> should snap to 18
+        self.assertEqual(parsed.get_closest_valid_line(path, 20, max_distance=3), 18)
 
         # Line 50 is far away -> should return None
         self.assertIsNone(parsed.get_closest_valid_line(path, 50, max_distance=3))

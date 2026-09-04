@@ -77,7 +77,7 @@ def main():
     pr = commenter.pr
 
     # Synchronize workspace to PR head commit if inside a git repository
-    if hasattr(pr, "head") and pr.head and hasattr(pr.head, "sha") and pr.head.sha:
+    if hasattr(pr, "head") and pr.head and hasattr(pr.head, "sha") and isinstance(pr.head.sha, str) and pr.head.sha:
         try:
             import subprocess
             subprocess.run(["git", "fetch", "--depth=1", "origin", pr.head.sha], check=True, capture_output=True, timeout=30)
