@@ -28,8 +28,25 @@
 
 ## 4. Naming & Terminology
 
-* **Event Handlers**: Do NOT include `Event` in event handler method names. Name event handlers by prefixing with `on` and working backwards through nested event class names (e.g., `MiraculousEvent.Transform.Finish` becomes `onFinishTransformMiraculous`, `LivingFallEvent` becomes `onLivingFall`).
-* **Event Handlers**: Do NOT include `Event` in event handler method names (e.g., use `onLivingFall` instead of `onLivingFallEvent`).
+* **Event Listener Method Naming**: Do NOT include `Event` in event listener method names. Event listener method names must follow the Java class hierarchy from left to right:
+  1. **Flat Events (non-nested classes)**:
+     Use `on` + the event class name (omitting `Event`):
+     - `RegisterCommandsEvent` -> `onRegisterCommands` (never invert words like `onCommandsRegister`)
+     - `ServerStartedEvent` -> `onServerStarted`
+     - `BlockDropsEvent` -> `onBlockDrops`
+     - `VillagerTradesEvent` -> `onVillagerTrades`
+  2. **Nested Events (hierarchical classes)**:
+     Use `on` + `[Phase]` + `OuterClass` (Domain) + `InnerClass` (Action):
+     - `BlockEvent.BreakEvent` -> `onBlockBreak` (Domain `Block` + Action `Break`)
+     - `ChunkEvent.Load` -> `onChunkLoad` (Domain `Chunk` + Action `Load`)
+     - `LuckyCharmEvent.DetermineTarget` -> `onLuckyCharmDetermineTarget` (Domain `LuckyCharm` + Action `DetermineTarget`)
+     - `EntityTickEvent.Pre` -> `onPreEntityTick`
+     - `MiraculousEvent.Transform.Pre` -> `onPreMiraculousTransform` (Domain `Miraculous` + Action `Transform`)
+     - `MiraculousEvent.Transform.Trigger` -> `onTriggerMiraculousTransform`
+     - `MiraculousEvent.Detransform.Pre` -> `onPreMiraculousDetransform`
+     - `KamikotizationEvent.Transform.Pre` -> `onPreKamikotizationTransform`
+     - `StealEvent.Start.Pre` -> `onPreStealStart`
+  * **Rule**: Never place the domain class name at the end of a method name (e.g., do NOT recommend `onPreTransformMiraculous`, `onBreakBlock`, or `onCommandsRegister`).
 * **Avoid "Tool" for Non-Tools**: Reserve the word "tool" strictly for actual tools (pickaxes, axes, shovels). Do NOT use it for miscellaneous, throwable, or magical items.
 
 ## 5. APIs
