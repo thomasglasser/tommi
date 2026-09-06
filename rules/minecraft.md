@@ -30,6 +30,8 @@
 
 ## 4. Naming & Terminology
 
+* **Event Listener Deduplication**: Do NOT flag event listener method names that deduplicate repeated words between outer and inner event classes (e.g., `onItemCanBreak` for `ItemBreakEvent.CanBreak` instead of `onItemBreakCanBreak`). Omitting redundant or repeated words across the class hierarchy is acceptable.
+
 * **Event Listener Method Naming**: Do NOT include `Event` in event listener method names. Event listener method names must follow the Java class hierarchy from left to right:
   1. **Flat Events (non-nested classes)**:
      Use `on` + the event class name (omitting `Event`):
