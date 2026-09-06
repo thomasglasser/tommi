@@ -31,7 +31,7 @@ class TestLearnerIntegration(unittest.TestCase):
         mock_github.get_repo.return_value = mock_tommi_repo
 
         with patch("src.learner.genai.Client") as mock_client_cls, \
-             patch("src.learner.resolve_model_name", return_value="gemini-3.7-flash"):
+             patch("src.learner.resolve_candidate_models", return_value=["gemini-3.7-flash"]):
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
 
@@ -96,7 +96,7 @@ class TestLearnerIntegration(unittest.TestCase):
         mock_pr.get_issue_comments.return_value = []
 
         with patch("src.learner.genai.Client") as mock_client_cls, \
-             patch("src.learner.resolve_model_name", return_value="gemini-3.7-flash"):
+             patch("src.learner.resolve_candidate_models", return_value=["gemini-3.7-flash"]):
             mock_client = MagicMock()
             mock_client_cls.return_value = mock_client
 
