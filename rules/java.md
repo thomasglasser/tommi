@@ -9,6 +9,8 @@
 
 ## 2. Language Features & APIs
 
+* **No Java Streams**: NEVER use the Java Streams API (`.stream().filter()...`), even in one-off events, infrequent handlers, or non-performance-sensitive code. ALWAYS use traditional for-loops, enhanced for-loops, or FastUtil iterators for consistency and assurance.
+
 * **Streams in One-Off Events**: Do NOT flag Java Stream API usage in one-off, infrequent event handlers (e.g., `LuckyCharmEvent` or on-demand ability triggers) that are not performance-sensitive or executed per-tick.
 
 * **Generic Shadowing & Type Checks**: Do NOT flag `instanceof` checks or type casts on generic type parameters inside static methods as redundant when the static method declares its own generic type parameter that shadows or differs from class-level generics.
