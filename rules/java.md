@@ -11,6 +11,8 @@
 
 ## 2. Language Features & APIs
 
+* **Optional.ifPresent Usage**: Do NOT flag `Optional.ifPresent(...)` or suggest replacing it with `isPresent()` and `.get()` checks to avoid lambda allocations; `ifPresent` is cleaner and the performance overhead is negligible outside of per-tick hot paths.
+
 * **No Java Streams**: NEVER use the Java Streams API (`.stream().filter()...`), even in one-off events, infrequent handlers, or non-performance-sensitive code. ALWAYS use traditional for-loops, enhanced for-loops, or FastUtil iterators for consistency and assurance.
 
 * **Streams in One-Off Events**: Do NOT flag Java Stream API usage in one-off, infrequent event handlers (e.g., `LuckyCharmEvent` or on-demand ability triggers) that are not performance-sensitive or executed per-tick.
