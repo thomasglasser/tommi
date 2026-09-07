@@ -9,6 +9,10 @@
 
 ## 2. Layout & Structure
 
+* **Inner Classes, Records & Enums Positioning**: Do NOT flag inner classes, records, or enums as violating class layout rules when they are properly declared at the very bottom of the class, even if fields or methods higher up reference them.
+
+* **Single-Statement Braces**: Omit curly braces (`{}`) for single-statement blocks (e.g., single-line `if`, `for`, `while`, or early `return`). However, the body statement MUST NOT be placed on the same line as the control statement; ALWAYS place it indented on a separate line.
+
 * **Static Factory & Builder Placement**:
   * Static builder accessors (e.g., `builder()`) may be placed directly above the nested builder class/record definition.
   * Static factory/constructing helpers (e.g., `of(...)`, `perching(...)`, `create(...)`) MUST be placed directly below the constructors and before instance methods.
@@ -30,6 +34,8 @@
 * **Spacing**: Avoid unnecessary blank lines. Keep closely related logic tightly grouped.
 
 ## 3. Code Cleanliness & DRY
+
+* **Verify Implementation Before Flagging**: NEVER flag utility methods, helper functions, or API calls as incorrect, redundant, or side-unsafe without first inspecting their internal implementation. Always verify the actual logic rather than assuming behavior based on method signatures or naming conventions.
 
 * **Field & Method Access (`this.`)**: Do NOT flag `this.` prefixes on field or method accesses when resolving variable shadowing or naming collisions with local variables or method parameters.
 * **Inlining**: Inline variables and methods that are only used once or merely wrap a single call.

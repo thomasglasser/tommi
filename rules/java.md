@@ -2,12 +2,18 @@
 
 ## 1. Collections & FastUtil
 
+* **LinkedHashSet & Sequenced Collections**: Do NOT flag standard `LinkedHashSet` as a violation of FastUtil collection rules when sequenced operations (such as `reversed()`) or `SequencedSet` compatibility are required; FastUtil's `ObjectLinkedOpenHashSet` does not support these methods.
+
 * **Avoid Default Collections**: Avoid standard `ArrayList` and `HashMap` in favor of FastUtil or Guava equivalents (e.g., `ObjectArrayList`, `ReferenceOpenHashSet`, `Object2ObjectOpenHashMap`) to minimize boxing and memory overhead.
 * **Immutability for Public APIs**: ALWAYS use Guava immutable collection types (`ImmutableList`, `ImmutableSet`, `ImmutableMap`) in return types and implementations for public APIs. NEVER use or suggest `Collections.unmodifiable*` wrappers as they obscure immutability in the API signature.
 * **Avoid Default Collections**: Avoid standard `ArrayList` and `HashMap` in favor of FastUtil or Guava equivalents (e.g., `ObjectArrayList`, `ReferenceOpenHashSet`, `Object2ObjectOpenHashMap`) to minimize boxing and memory overhead.
 * **Immutability for Public APIs**: Use `ImmutableList`, `ImmutableSet`, or `ImmutableMap` when returning collections in public APIs to prevent unintended mutations.
 
 ## 2. Language Features & APIs
+
+* **Optional.ifPresent Usage**: Do NOT flag `Optional.ifPresent(...)` or suggest replacing it with `isPresent()` and `.get()` checks to avoid lambda allocations; `ifPresent` is cleaner and the performance overhead is negligible outside of per-tick hot paths.
+
+* **No Java Streams**: NEVER use the Java Streams API (`.stream().filter()...`), even in one-off events, infrequent handlers, or non-performance-sensitive code. ALWAYS use traditional for-loops, enhanced for-loops, or FastUtil iterators for consistency and assurance.
 
 * **Streams in One-Off Events**: Do NOT flag Java Stream API usage in one-off, infrequent event handlers (e.g., `LuckyCharmEvent` or on-demand ability triggers) that are not performance-sensitive or executed per-tick.
 
