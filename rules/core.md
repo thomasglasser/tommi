@@ -9,6 +9,8 @@
 
 ## 2. Layout & Structure
 
+* **Sequential Fallback Checks**: Do NOT suggest converting sequential `if` fallback assignments (e.g., `if (x == null) x = ...; if (x == null) x = ...;`) into `else if` chains; sequential execution is required to check whether previous fallback assignments evaluated to `null`.
+
 * **Inner Classes, Records & Enums Positioning**: Do NOT flag inner classes, records, or enums as violating class layout rules when they are properly declared at the very bottom of the class, even if fields or methods higher up reference them.
 
 * **Single-Statement Braces**: Omit curly braces (`{}`) for single-statement blocks (e.g., single-line `if`, `for`, `while`, or early `return`). However, the body statement MUST NOT be placed on the same line as the control statement; ALWAYS place it indented on a separate line.
