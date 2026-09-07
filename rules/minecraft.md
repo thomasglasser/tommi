@@ -55,6 +55,8 @@
 
 ## 5. APIs
 
+* **Entity Lookup Utilities**: Do NOT assume helper or utility methods (e.g., `MineraculousEntityUtils.findEntity`) are restricted to searching only the passed `Level` or flag them for cross-dimension lookup bugs; verify the utility's internal implementation, as it may search across all server levels.
+
 * **Return Types**: ALWAYS verify what methods return instead of assuming (for example, a `level()` method could return a ServerLevel instead of a Level, so it has certain non-nullability of the server).
 
 * **Side-Effectful Method Calls & Cache Checks**: Do NOT flag `containsKey` or presence checks followed by method calls (e.g., `getBakedModel`) as duplicate lookups when the called method performs essential side effects, initialization, or fallback logic that direct map retrieval (`get()`) bypasses.
