@@ -33,6 +33,8 @@
 
 ## 3. Code Cleanliness & DRY
 
+* **Verify Implementation Before Flagging**: NEVER flag utility methods, helper functions, or API calls as incorrect, redundant, or side-unsafe without first inspecting their internal implementation. Always verify the actual logic rather than assuming behavior based on method signatures or naming conventions.
+
 * **Field & Method Access (`this.`)**: Do NOT flag `this.` prefixes on field or method accesses when resolving variable shadowing or naming collisions with local variables or method parameters.
 * **Inlining**: Inline variables and methods that are only used once or merely wrap a single call.
 * **DRY (Don't Repeat Yourself)**: Extract duplicated logic into parent classes or utility methods.
