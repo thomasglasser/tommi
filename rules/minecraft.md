@@ -57,6 +57,8 @@
 
 ## 5. APIs
 
+* **hasEffect Usage**: Do NOT flag `entity.hasEffect(...)` as an anti-pattern or check effect pattern violation when `entity.getEffect(...)` is not subsequently called and the `MobEffectInstance` itself is not used.
+
 * **Mob Effect Comparisons & Matching**: Do NOT flag explicit, manual iteration, or non-standard comparisons involving `MobEffect`, `MobEffectInstance`, `Holder<MobEffect>`, or `HolderSet<MobEffect>` (e.g., manually iterating over a `HolderSet` and comparing references, `.value()`, or keys instead of using `HolderSet#contains` or `Holder#is`) as redundant or convoluted; Mob Effect matching has quirks requiring specific comparison logic to remain accurate.
 
 * **Return Types**: ALWAYS verify what methods return instead of assuming (for example, a `level()` method could return a ServerLevel instead of a Level, so it has certain non-nullability of the server).
