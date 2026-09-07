@@ -14,6 +14,9 @@ def clear_model_cache() -> None:
     _CACHED_RESOLVED_MODELS = None
 
 
+MAX_CANDIDATE_MODELS = 3
+
+
 def _parse_model_version(model_name: str) -> tuple:
     """Extract numeric version tuple from a model name like 'gemini-3.8-flash' -> (3, 8)."""
     match = re.search(r"gemini-(\d+(?:\.\d+)*)", model_name)
@@ -29,19 +32,17 @@ def _model_sort_key(model_name: str) -> tuple:
     """
     Sort key for models:
     1. Semantic version tuple descending (e.g. (3, 8) > (3, 7))
-    2. Clean base model over variants (e.g. gemini-3.8-flash > gemini-3.8-flash-lite)
+    2. Clean base model over variants (e.g. gemini-3.8-flash > gemini-3.8-flash-preview)
     """
     ver_tuple = _parse_model_version(model_name)
     ver_str = ".".join(str(x) for x in ver_tuple)
 
     if model_name == f"gemini-{ver_str}-flash":
-        tier = 3
-    elif model_name.startswith(f"gemini-{ver_str}-flash-preview"):
         tier = 2
-    elif "lite" in model_name or "8b" in model_name:
-        tier = 0
-    else:
+    elif model_name.startswith(f"gemini-{ver_str}-flash-preview"):
         tier = 1
+    else:
+        tier = 0
 
     return (ver_tuple, tier)
 
@@ -50,8 +51,9 @@ def resolve_candidate_models(client: genai.Client, configured_model: Optional[st
     """
     Resolves a prioritized list of Gemini models to try.
     If a specific model name is provided, returns [configured_model].
-    If 'auto' (or empty) is provided, queries the Gemini API for supported Flash models
-    ordered from newest to oldest. Fails if the model list cannot be retrieved or contains no Flash models.
+    If 'auto' (or empty) is provided, queries the Gemini API for the 3 newest supported Flash
+    models (excluding flash-lite, lightweight, or experimental variants).
+    Fails if the model list cannot be retrieved or contains no suitable Flash models.
     """
     global _CACHED_RESOLVED_MODELS
 
@@ -77,6 +79,8 @@ def resolve_candidate_models(client: genai.Client, configured_model: Optional[st
         "thinking-preview",
         "-exp",
         "exp-",
+        "lite",
+        "8b",
     ]
 
     for model in models_pager:
@@ -92,9 +96,10 @@ def resolve_candidate_models(client: genai.Client, configured_model: Optional[st
 
     unique_candidates = list(dict.fromkeys(flash_candidates))
     sorted_candidates = sorted(unique_candidates, key=_model_sort_key, reverse=True)
+    top_candidates = sorted_candidates[:MAX_CANDIDATE_MODELS]
 
-    logger.info(f"Discovered {len(sorted_candidates)} Flash model(s) via API: {sorted_candidates}")
-    _CACHED_RESOLVED_MODELS = sorted_candidates
+    logger.info(f"Discovered {len(sorted_candidates)} standard Flash model(s) via API; selected top {len(top_candidates)}: {top_candidates}")
+    _CACHED_RESOLVED_MODELS = top_candidates
     return _CACHED_RESOLVED_MODELS
 
 

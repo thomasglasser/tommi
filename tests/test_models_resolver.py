@@ -24,10 +24,13 @@ class TestModelsResolver(unittest.TestCase):
     def test_auto_dynamic_discovery_and_sorting(self):
         client = MagicMock()
         client.models.list.return_value = [
+            MockModel("models/gemini-2.0-flash"),
             MockModel("models/gemini-2.5-flash"),
             MockModel("models/gemini-3.7-flash"),
             MockModel("models/gemini-3.8-flash"),
             MockModel("models/gemini-3.8-flash-lite"),
+            MockModel("models/gemini-2.0-flash-lite"),
+            MockModel("models/gemini-1.5-flash-8b"),
             MockModel("models/text-embedding-004"),
             MockModel("models/gemini-2.0-flash-thinking-exp"),
         ]
@@ -37,7 +40,6 @@ class TestModelsResolver(unittest.TestCase):
             candidates,
             [
                 "gemini-3.8-flash",
-                "gemini-3.8-flash-lite",
                 "gemini-3.7-flash",
                 "gemini-2.5-flash",
             ],
