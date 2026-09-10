@@ -37,6 +37,8 @@
 
 ## 3. Code Cleanliness & DRY
 
+* **Nested & Inner Class References**: Do NOT flag referencing inner classes, records, or enums via their top-level outer class (e.g., `OuterClass.InnerClass`) as qualified inline name violations, nor suggest importing inner types directly when the top-level outer class is imported.
+
 * **Fully Qualified Class Names in Javadocs**: Do NOT flag fully qualified class names in Javadoc tags (e.g., `{@link net.minecraft.world.entity.Entity}`) when the referenced class is not used in the Java code itself; formatters (such as Immaculate) strip imports that are only referenced in Javadocs.
 
 * **Verify Implementation Before Flagging**: NEVER flag utility methods, helper functions, or API calls as incorrect, redundant, or side-unsafe without first inspecting their internal implementation. Always verify the actual logic rather than assuming behavior based on method signatures or naming conventions.
