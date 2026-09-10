@@ -55,6 +55,8 @@
 * **Return Types**: Design methods to return informative types or booleans (e.g., success/failure or cancellation) rather than relying on side effects.
 
 ## 4. Git & Review Etiquette
+
+* **Accurate Invocation & Member Usage Checks**: NEVER claim a method, field, or helper is unused, never invoked, or missing from execution paths without thoroughly verifying the entire file and class, including unchanged lines outside the diff hunk. Do NOT assert that a method is never called or suggest adding invocations without confirming it is genuinely absent everywhere.
 * **Pay Attention to IDE Warnings**: Never ignore yellow/red IDE warnings (e.g., comparing `ResourceKey` to `ResourceLocation`).
 * **Self-Review**: Contributors MUST review their own PR diff before requesting review.
 * **Complete Fixes**: Do not mark review comments as resolved without actually fixing the underlying issue.
