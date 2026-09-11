@@ -54,55 +54,129 @@ class TommiReviewer:
             return []
 
         text = raw_text.strip()
-        if text.startswith("```json"):
-            text = text[7:]
-        elif text.startswith("```"):
-            text = text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        text = text.strip()
+
+        def _extract_comments(data: Any) -> Optional[List[Dict[str, Any]]]:
+            if isinstance(data, list):
+                if not data or all(isinstance(item, dict) for item in data):
+                    return data
+            elif isinstance(data, dict):
+                for key in ("comments", "reviews", "review_comments", "items", "data"):
+                    if key in data and isinstance(data[key], list):
+                        if not data[key] or all(isinstance(item, dict) for item in data[key]):
+                            return data[key]
+                if "path" in data and "line" in data:
+                    return [data]
+                for v in data.values():
+                    if isinstance(v, list) and v and all(isinstance(item, dict) for item in v):
+                        return v
+                return [data]
+            return None
 
         # 1. Direct JSON parse (with strict=False to handle unescaped control chars)
         try:
             data = json.loads(text, strict=False)
-            if isinstance(data, list):
-                return data
-            if isinstance(data, dict):
-                for key in ("comments", "reviews", "review_comments", "items", "data"):
-                    if key in data and isinstance(data[key], list):
-                        return data[key]
-                return [data]
+            comments = _extract_comments(data)
+            if comments is not None:
+                return comments
         except Exception:
             pass
 
-        # 2. Extract bracketed array substring if model wrapped it in prose
-        start_idx = text.find("[")
-        if start_idx != -1:
-            end_idx = text.rfind("]")
-            if end_idx != -1 and end_idx > start_idx:
-                try:
-                    data = json.loads(text[start_idx:end_idx + 1], strict=False)
-                    if isinstance(data, list):
-                        return data
-                except Exception:
-                    pass
+        # 2. Extract from markdown code fences ```json ... ``` or ``` ... ``` anywhere in text
+        fence_matches = re.finditer(r"```(?:json)?\s*([\[{].*?[\]}])\s*```", text, re.DOTALL)
+        for match in fence_matches:
+            block = match.group(1).strip()
+            try:
+                data = json.loads(block, strict=False)
+                comments = _extract_comments(data)
+                if comments is not None:
+                    return comments
+            except Exception:
+                pass
 
-        # 3. Attempt salvage of truncated JSON array (e.g. if token limit cut off the last item)
-        if start_idx != -1:
-            last_brace = text.rfind("}")
-            if last_brace != -1 and last_brace > start_idx:
-                salvage_candidate = text[start_idx:last_brace + 1].strip() + "]"
-                try:
-                    data = json.loads(salvage_candidate, strict=False)
-                    if isinstance(data, list) and data:
-                        logger.warning(
-                            f"AI review JSON was truncated mid-generation. Successfully salvaged {len(data)} completed review comment(s)."
-                        )
-                        return data
-                except Exception:
-                    pass
+        # 3. Strip outer markdown fences if text was wrapped in code fence
+        clean_text = text
+        if "```json" in clean_text:
+            clean_text = clean_text.split("```json", 1)[1]
+        elif "```" in clean_text:
+            clean_text = clean_text.split("```", 1)[1]
+        if "```" in clean_text:
+            clean_text = clean_text.rsplit("```", 1)[0]
+        clean_text = clean_text.strip()
 
-        # 4. If all parsing/salvage attempts fail, raise RuntimeError
+        if clean_text != text:
+            try:
+                data = json.loads(clean_text, strict=False)
+                comments = _extract_comments(data)
+                if comments is not None:
+                    return comments
+            except Exception:
+                pass
+
+        # 4. Search for outermost JSON array or object starting candidate in text (and clean_text)
+        for candidate_text in (clean_text, text):
+            # Find candidate JSON arrays starting with '[' followed by '{' or ']'
+            array_starts = [m.start() for m in re.finditer(r"\[\s*(?:\{|\])", candidate_text)]
+            for start_idx in array_starts:
+                end_idx = candidate_text.rfind("]")
+                if end_idx > start_idx:
+                    try:
+                        data = json.loads(candidate_text[start_idx:end_idx + 1], strict=False)
+                        comments = _extract_comments(data)
+                        if comments is not None:
+                            return comments
+                    except Exception:
+                        pass
+
+            # Also check simple '[' and ']' if pattern above didn't match
+            start_idx = candidate_text.find("[")
+            if start_idx != -1:
+                end_idx = candidate_text.rfind("]")
+                if end_idx > start_idx:
+                    try:
+                        data = json.loads(candidate_text[start_idx:end_idx + 1], strict=False)
+                        comments = _extract_comments(data)
+                        if comments is not None:
+                            return comments
+                    except Exception:
+                        pass
+
+            # Check JSON object: '{' and '}'
+            start_idx = candidate_text.find("{")
+            if start_idx != -1:
+                end_idx = candidate_text.rfind("}")
+                if end_idx > start_idx:
+                    try:
+                        data = json.loads(candidate_text[start_idx:end_idx + 1], strict=False)
+                        comments = _extract_comments(data)
+                        if comments is not None:
+                            return comments
+                    except Exception:
+                        pass
+
+        # 5. Attempt salvage of truncated JSON array (e.g. if token limit cut off the last item)
+        for candidate_text in (clean_text, text):
+            array_starts = [m.start() for m in re.finditer(r"\[\s*\{", candidate_text)]
+            if not array_starts:
+                start_bracket = candidate_text.find("[")
+                if start_bracket != -1:
+                    array_starts = [start_bracket]
+
+            for start_idx in array_starts:
+                last_brace = candidate_text.rfind("}")
+                if last_brace > start_idx:
+                    salvage_candidate = candidate_text[start_idx:last_brace + 1].strip() + "]"
+                    try:
+                        data = json.loads(salvage_candidate, strict=False)
+                        comments = _extract_comments(data)
+                        if comments is not None and comments:
+                            logger.warning(
+                                f"AI review JSON was truncated mid-generation. Successfully salvaged {len(comments)} completed review comment(s)."
+                            )
+                            return comments
+                    except Exception:
+                        pass
+
+        # 6. If all parsing/salvage attempts fail, raise RuntimeError
         raise RuntimeError(f"Unable to parse AI review JSON response: {text[:200]}...")
 
     def _execute_review_generation(
@@ -129,6 +203,8 @@ class TommiReviewer:
             )
             if tools_list:
                 gen_config.tools = tools_list
+            else:
+                gen_config.response_mime_type = "application/json"
 
             response = self.client.models.generate_content(
                 model=model_name,
@@ -204,6 +280,7 @@ class TommiReviewer:
         final_config = types.GenerateContentConfig(
             temperature=0.15,
             max_output_tokens=65536,
+            response_mime_type="application/json",
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
         final_response = self.client.models.generate_content(
@@ -383,7 +460,7 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment.
 10. If there are no issues found, return an empty array `[]`.
-11. Return ONLY the raw JSON array.
+11. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
 """
 
     def _align_suggestion_indentation(self, body: str, path: str, line: int, parsed_diff: ParsedDiff) -> str:

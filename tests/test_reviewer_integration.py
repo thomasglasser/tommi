@@ -228,6 +228,95 @@ index 1111111..2222222 100644
         self.assertEqual(res[0]["path"], "Test.java")
         self.assertEqual(res[0]["body"], "First issue")
 
+    def test_parse_and_repair_json_with_conversational_preamble_and_brackets(self):
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client"):
+            reviewer = TommiReviewer(config)
+
+        # Gemini output with preamble mentioning [Foo.java] and code before fenced JSON block
+        text = """I reviewed the diff. In [Foo.java] I noticed you changed `someMethod()` and moved onShouldTrackEntity down to line 213.
+Here are the review comments:
+```json
+[
+  {"path": "src/Foo.java", "line": 213, "body": "Check method placement.", "severity": "WARNING"}
+]
+```
+Hope this helps!"""
+        res = reviewer._parse_and_repair_json(text)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["path"], "src/Foo.java")
+        self.assertEqual(res[0]["line"], 213)
+        self.assertEqual(res[0]["body"], "Check method placement.")
+
+    def test_parse_and_repair_json_with_preamble_no_fences(self):
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client"):
+            reviewer = TommiReviewer(config)
+
+        text = """I reviewed [Foo.java] and [Bar.java]:
+[
+  {"path": "src/Bar.java", "line": 42, "body": "Use Holder<Block>.", "severity": "CRITICAL"}
+]
+End of review."""
+        res = reviewer._parse_and_repair_json(text)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["path"], "src/Bar.java")
+        self.assertEqual(res[0]["line"], 42)
+        self.assertEqual(res[0]["severity"], "CRITICAL")
+
+    def test_parse_and_repair_json_fenced_dict_with_preamble(self):
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client"):
+            reviewer = TommiReviewer(config)
+
+        text = """Here is the structured review:
+```json
+{
+  "comments": [
+    {"path": "src/Baz.java", "line": 15, "body": "Fix typo.", "severity": "SUGGESTION"}
+  ]
+}
+```"""
+        res = reviewer._parse_and_repair_json(text)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["path"], "src/Baz.java")
+        self.assertEqual(res[0]["body"], "Fix typo.")
+
+    def test_parse_and_repair_json_truncated_with_preamble(self):
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client"):
+            reviewer = TommiReviewer(config)
+
+        text = """Analyzing [Foo.java]...
+```json
+[
+  {"path": "src/Foo.java", "line": 10, "body": "Valid comment", "severity": "WARNING"},
+  {"path": "src/Foo.java", "line": 20, "body": "Cut off mid-sent"""
+        res = reviewer._parse_and_repair_json(text)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["path"], "src/Foo.java")
+        self.assertEqual(res[0]["body"], "Valid comment")
+
+    def test_execute_review_generation_uses_application_json_mime_type(self):
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            mock_resp = MagicMock()
+            mock_resp.function_calls = None
+            mock_resp.candidates = []
+            mock_resp.text = "[]"
+            mock_client.models.generate_content.return_value = mock_resp
+
+            reviewer = TommiReviewer(config)
+            reviewer._execute_review_generation("gemini-3.8-flash", "test prompt", enable_tools=False)
+
+            call_args = mock_client.models.generate_content.call_args
+            gen_config = call_args.kwargs.get("config")
+            self.assertIsNotNone(gen_config)
+            self.assertEqual(gen_config.response_mime_type, "application/json")
+
     @patch("src.reviewer.requests.get")
     def test_review_pr_fallback_on_parse_error(self, mock_requests_get):
         mock_resp = MagicMock()
