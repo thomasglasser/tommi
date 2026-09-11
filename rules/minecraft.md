@@ -11,6 +11,8 @@
 
 ## 2. Registry & Data Management
 
+* **Reversion Causality Multimap Removal**: Do NOT flag `causeHierarchy.values().removeAll(...)` or removing cause sets from causality hierarchy multimaps as unsafe or potentially stripping entries from unrelated trees; cause graph traversal (`getAllCausesFor`) resolves complete connected components bidirectionally.
+
 * **Reversion & Undo Collection Snapshots**: Do NOT flag getter methods or calls returning collection snapshots (e.g., `ImmutableList` snapshots from `getAllEntries()`) as redundant or inefficient allocations outside hot tick loops; snapshots are required to prevent `ConcurrentModificationException` when entries are mutated during iteration.
 
 * **Reversion & Undo Scans**: Do NOT suggest early loop termination (`break` or `return`) or flag duplicate processing when iterating over reversion entries, undo queues, or history logs for a given entity or target; multiple entries can legitimately apply to the same entity (such as chained conversions or re-reversions) and must be processed.
