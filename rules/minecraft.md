@@ -59,6 +59,8 @@
 
 ## 5. APIs
 
+* **Level Entity Retrieval by UUID**: Do NOT suggest calling `level.getEntity(uuid)` on `Level` or `player.level()`; `Level` does not have a `getEntity(UUID)` method. Entity retrieval by `UUID` on standard `Level` instances requires `level.getEntities().get(uuid)` (or casting to `ServerLevel`).
+
 * **Dimension-Local Entity Lookups**: Do NOT suggest replacing `level.getEntity(...)` or dimension-local entity lookups with global search utilities (such as `MineraculousEntityUtils.findLivingEntity`) when the lookup is scoped to the current level; global entity utilities search across all dimensions on the server and have different scoping behavior.
 
 * **ItemEntity Empty Stack Discarding**: Do NOT flag or suggest calling `discard()` on an `ItemEntity` when setting its stack to empty or clearing its slot; `ItemEntity` automatically checks if its stack is empty during its tick and handles discarding itself.
