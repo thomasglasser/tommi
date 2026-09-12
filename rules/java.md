@@ -11,6 +11,8 @@
 
 ## 2. Language Features & APIs
 
+* **Single-Line vs. Multi-Line Javadocs**: Use `///` EXCLUSIVELY for single-line Javadocs. Multi-line Javadocs MUST use standard `/** ... */` block syntax. NEVER use or suggest `///` for multi-line comments, and NEVER suggest converting multi-line `/** ... */` Javadocs to `///`.
+
 * **Collection & Iterable forEach**: Do NOT flag `.forEach(...)` calls on collections or iterables with single-statement lambdas as anti-patterns or suggest converting them to enhanced for-loops outside of per-tick hot paths; single-statement `forEach` calls are acceptable.
 
 * **Optional.ifPresent Usage**: Do NOT flag `Optional.ifPresent(...)` or suggest replacing it with `isPresent()` and `.get()` checks to avoid lambda allocations; `ifPresent` is cleaner and the performance overhead is negligible outside of per-tick hot paths.
