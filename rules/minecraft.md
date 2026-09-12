@@ -59,6 +59,8 @@
 
 ## 5. APIs
 
+* **Dimension-Local Entity Lookups**: Do NOT suggest replacing `level.getEntity(...)` or dimension-local entity lookups with global search utilities (such as `MineraculousEntityUtils.findLivingEntity`) when the lookup is scoped to the current level; global entity utilities search across all dimensions on the server and have different scoping behavior.
+
 * **ItemEntity Empty Stack Discarding**: Do NOT flag or suggest calling `discard()` on an `ItemEntity` when setting its stack to empty or clearing its slot; `ItemEntity` automatically checks if its stack is empty during its tick and handles discarding itself.
 
 * **hasEffect Usage**: Do NOT flag `entity.hasEffect(...)` as an anti-pattern or check effect pattern violation when `entity.getEffect(...)` is not subsequently called and the `MobEffectInstance` itself is not used.
