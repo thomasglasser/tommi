@@ -69,16 +69,32 @@ class TommiLearner:
             max_attempts = 2
             for attempt in range(max_attempts):
                 try:
-                    response = self.client.models.generate_content(
-                        model=model_name,
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            temperature=0.1,
-                            response_mime_type="application/json",
-                            max_output_tokens=65536,
-                            automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
-                        )
+                    gen_config = types.GenerateContentConfig(
+                        temperature=0.1,
+                        response_mime_type="application/json",
+                        max_output_tokens=65536,
+                        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                     )
+                    if getattr(self.config, "thinking_budget", None) is not None:
+                        gen_config.thinking_config = types.ThinkingConfig(thinking_budget=self.config.thinking_budget)
+
+                    try:
+                        response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=prompt,
+                            config=gen_config,
+                        )
+                    except Exception as gen_err:
+                        if gen_config.thinking_config and ("thinking" in str(gen_err).lower() or "unsupported" in str(gen_err).lower()):
+                            logger.info(f"Model '{model_name}' does not support thinking_config in learner. Retrying without thinking_config...")
+                            gen_config.thinking_config = None
+                            response = self.client.models.generate_content(
+                                model=model_name,
+                                contents=prompt,
+                                config=gen_config,
+                            )
+                        else:
+                            raise gen_err
                     break
                 except Exception as e:
                     error_str = str(e).lower()

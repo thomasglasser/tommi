@@ -171,11 +171,26 @@ class TommiReviewer:
             else:
                 gen_config.response_mime_type = "application/json"
 
-            response = self.client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=gen_config,
-            )
+            if self.config.thinking_budget is not None:
+                gen_config.thinking_config = types.ThinkingConfig(thinking_budget=self.config.thinking_budget)
+
+            try:
+                response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=gen_config,
+                )
+            except Exception as gen_err:
+                if gen_config.thinking_config and ("thinking" in str(gen_err).lower() or "unsupported" in str(gen_err).lower()):
+                    logger.info(f"Model '{model_name}' does not support thinking_config. Retrying without thinking_config...")
+                    gen_config.thinking_config = None
+                    response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=gen_config,
+                    )
+                else:
+                    raise gen_err
 
             # Check if Gemini returned function calls
             raw_fcs = getattr(response, "function_calls", None)
@@ -248,11 +263,26 @@ class TommiReviewer:
             response_mime_type="application/json",
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
-        final_response = self.client.models.generate_content(
-            model=model_name,
-            contents=contents,
-            config=final_config,
-        )
+        if self.config.thinking_budget is not None:
+            final_config.thinking_config = types.ThinkingConfig(thinking_budget=self.config.thinking_budget)
+
+        try:
+            final_response = self.client.models.generate_content(
+                model=model_name,
+                contents=contents,
+                config=final_config,
+            )
+        except Exception as gen_err:
+            if final_config.thinking_config and ("thinking" in str(gen_err).lower() or "unsupported" in str(gen_err).lower()):
+                logger.info(f"Model '{model_name}' does not support thinking_config on final turn. Retrying without thinking_config...")
+                final_config.thinking_config = None
+                final_response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=final_config,
+                )
+            else:
+                raise gen_err
         return final_response.text.strip() if final_response and final_response.text else ""
 
     def review_pr(self, pr_title: str, pr_body: str, pr_url: str, enable_tools: bool = False) -> List[Dict[str, Any]]:
@@ -411,21 +441,27 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 2. ALWAYS prioritize reporting critical bugs, side-safety crashes, and performance issues before reporting cosmetic style/naming nitpicks.
 3. **Trust Compiler & Build Verification**: All PRs are verified to compile and build cleanly via Gradle prior to review. NEVER claim there are compilation errors, syntax errors, duplicate method/field definitions, or missing types that the Java compiler would reject. If you think a method is defined twice, you are misreading a method invocation (e.g. inside an `if` condition) or an overload. Do NOT flag compiler errors.
 4. **Verify Full Method Scope for Variables**: NEVER report a parameter or variable as unused unless you have traced the entire method body and confirmed it is completely unreferenced. Check event postings (`NeoForge.EVENT_BUS.post(...)`), constructor arguments, method calls, lambda closures, and return values before alleging an unused parameter.
-5. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-6. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
+5. **Verify Full Class Scope for Methods & Fields**: Surrounding source code for all modified files is provided above in the 'MODIFIED FILES SURROUNDING SOURCE CODE' section. NEVER claim a method, field, helper, or override is unused, never called, or missing without checking the entire class. If a method is called by another method in the class, overrides an interface/parent method, acts as a factory, or listens to events (e.g. `@SubscribeEvent`), it is actively used.
+6. **Respect Learned Architectural Exceptions**:
+   - Do NOT flag sequential `if` fallback assignments (`if (x == null) x = ...; if (x == null) x = ...;`) as candidates for `else if` chains; sequential evaluation is required for fallbacks.
+   - Do NOT flag referencing inner classes or enums via an imported outer class (e.g. `Outer.Inner`).
+   - Do NOT flag fully qualified class names inside Javadoc tags (e.g. `{{@link ...}}`).
+   - Do NOT flag single-statement `.forEach(...)` on collections outside hot paths.
+7. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
+8. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
    ```suggestion
    exact replacement code
    ```
-7. Do NOT leave generic praise or comment on valid, unchanged code.
-8. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
-9. Each object must have:
+9. Do NOT leave generic praise or comment on valid, unchanged code.
+10. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+11. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. **CRITICAL**: Read the line number directly from the line prefix in the annotated diff (e.g. `  189: + ...` or `  190:   ...`). Do NOT count or estimate line numbers.
    - `target_code`: The exact line or distinctive snippet of code from the diff that this comment targets.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment.
-10. If there are no issues found, return an empty array `[]`.
-11. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
+12. If there are no issues found, return an empty array `[]`.
+13. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
 """
 
     def _align_suggestion_indentation(self, body: str, path: str, line: int, parsed_diff: ParsedDiff) -> str:

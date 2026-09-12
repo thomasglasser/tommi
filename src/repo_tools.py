@@ -73,10 +73,10 @@ class WorkspaceInspector:
         header = f"=== File: {file_path} (Lines {start_line}-{min(end_line, total_lines)} of {total_lines}) ==="
         return f"{header}\n" + "\n".join(formatted)
 
-    def get_hunk_context(self, file_path: str, changed_lines: Optional[List[int]] = None, padding: int = 40) -> str:
+    def get_hunk_context(self, file_path: str, changed_lines: Optional[List[int]] = None, padding: int = 100) -> str:
         """
         Reads the surrounding context for changed lines in a file.
-        If the entire file is <= 400 lines, returns the complete file.
+        If the entire file is <= 1500 lines, returns the complete file.
         Otherwise, returns merged window slices around changed lines with line numbers.
         """
         target = self._resolve_safe_path(file_path)
@@ -93,8 +93,8 @@ class WorkspaceInspector:
         if total_lines == 0:
             return f"=== File: {file_path} (Empty file) ==="
 
-        # If file is small or no specific changed lines provided, return the whole file
-        if total_lines <= 400 or not changed_lines:
+        # If file is within context threshold or no specific changed lines provided, return the whole file
+        if total_lines <= 1500 or not changed_lines:
             formatted = [f"{i:4d}: {line.rstrip()}" for i, line in enumerate(lines, start=1)]
             header = f"=== File: {file_path} (Lines 1-{total_lines} of {total_lines}) ==="
             return f"{header}\n" + "\n".join(formatted)

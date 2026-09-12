@@ -22,6 +22,40 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.comment_body, "/tommi review")
         self.assertEqual(cfg.model_name, "auto")
         self.assertEqual(cfg.tommi_repo, "thomasglasser/tommi")
+        self.assertEqual(cfg.thinking_budget, -1)
+
+    @patch.dict(os.environ, {
+        "GITHUB_TOKEN": "ghp_test123",
+        "GEMINI_API_KEY": "gemini_test456",
+        "GITHUB_REPOSITORY": "thomasglasser/Mineraculous",
+        "PR_NUMBER": "42",
+        "THINKING_BUDGET": "2048",
+    })
+    def test_thinking_budget_custom_int(self):
+        cfg = TommiConfig.from_env()
+        self.assertEqual(cfg.thinking_budget, 2048)
+
+    @patch.dict(os.environ, {
+        "GITHUB_TOKEN": "ghp_test123",
+        "GEMINI_API_KEY": "gemini_test456",
+        "GITHUB_REPOSITORY": "thomasglasser/Mineraculous",
+        "PR_NUMBER": "42",
+        "THINKING_BUDGET": "0",
+    })
+    def test_thinking_budget_disabled(self):
+        cfg = TommiConfig.from_env()
+        self.assertEqual(cfg.thinking_budget, 0)
+
+    @patch.dict(os.environ, {
+        "GITHUB_TOKEN": "ghp_test123",
+        "GEMINI_API_KEY": "gemini_test456",
+        "GITHUB_REPOSITORY": "thomasglasser/Mineraculous",
+        "PR_NUMBER": "42",
+        "THINKING_BUDGET": "auto",
+    })
+    def test_thinking_budget_auto(self):
+        cfg = TommiConfig.from_env()
+        self.assertEqual(cfg.thinking_budget, -1)
 
     @patch.dict(os.environ, {
         "APP_ID": "123456",

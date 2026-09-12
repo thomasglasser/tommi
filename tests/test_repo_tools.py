@@ -75,15 +75,15 @@ class TestWorkspaceInspector(unittest.TestCase):
         self.assertIn("DURATION_TICKS", result)
 
     def test_get_hunk_context_large_file(self):
-        # Create a file with 500 lines
+        # Create a file with 1600 lines
         large_file = os.path.join(self.workspace, "Large.java")
         with open(large_file, "w", encoding="utf-8") as f:
-            for i in range(1, 501):
+            for i in range(1, 1601):
                 f.write(f"// Line {i}\n")
 
         result = self.inspector.get_hunk_context("Large.java", changed_lines=[300], padding=10)
         self.assertIn("=== File Context: Large.java ===", result)
-        self.assertIn("Lines 290-310 of 500", result)
+        self.assertIn("Lines 290-310 of 1600", result)
         self.assertIn("// Line 300", result)
         self.assertNotIn("// Line 100", result)
 

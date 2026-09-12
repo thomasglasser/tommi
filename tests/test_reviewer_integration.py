@@ -316,9 +316,37 @@ End of review."""
             gen_config = call_args.kwargs.get("config")
             self.assertIsNotNone(gen_config)
             self.assertEqual(gen_config.response_mime_type, "application/json")
+            self.assertIsNotNone(gen_config.thinking_config)
+            self.assertEqual(gen_config.thinking_config.thinking_budget, -1)
+
+    def test_execute_review_generation_thinking_budget_fallback(self):
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client") as mock_client_cls:
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            mock_resp = MagicMock()
+            mock_resp.function_calls = None
+            mock_resp.candidates = []
+            mock_resp.text = "[]"
+
+            # First call fails with unsupported thinking error, second call succeeds
+            mock_client.models.generate_content.side_effect = [
+                Exception("Invalid argument: thinking_budget is not supported by model"),
+                mock_resp
+            ]
+
+            reviewer = TommiReviewer(config)
+            res = reviewer._execute_review_generation("gemini-1.5-flash", "test prompt", enable_tools=False)
+
+            self.assertEqual(res, "[]")
+            self.assertEqual(mock_client.models.generate_content.call_count, 2)
+            second_call_config = mock_client.models.generate_content.call_args_list[1].kwargs.get("config")
+            self.assertIsNone(second_call_config.thinking_config)
 
     @patch("src.reviewer.requests.get")
-    def test_review_pr_fallback_on_parse_error(self, mock_requests_get):
+    @patch("src.reviewer.time.sleep")
+    def test_review_pr_fallback_on_parse_error(self, mock_sleep, mock_requests_get):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = "diff --git a/src/Test.java b/src/Test.java\n@@ -1,3 +1,3 @@\n+line1\n"
@@ -412,7 +440,8 @@ End of review."""
 
 
     @patch("src.reviewer.requests.get")
-    def test_review_pr_with_workspace_tool_call(self, mock_requests_get):
+    @patch("src.reviewer.time.sleep")
+    def test_review_pr_with_workspace_tool_call(self, mock_sleep, mock_requests_get):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = "diff --git a/src/Test.java b/src/Test.java\n+ var x = MyManager.get(player);\n"
@@ -507,7 +536,8 @@ End of review."""
                 reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1", enable_tools=True)
 
     @patch("src.reviewer.requests.get")
-    def test_tool_budget_exhaustion_synthesizes_final_turn(self, mock_requests_get):
+    @patch("src.reviewer.time.sleep")
+    def test_tool_budget_exhaustion_synthesizes_final_turn(self, mock_sleep, mock_requests_get):
         mock_resp = MagicMock()
         mock_resp.status_code = 200
         mock_resp.text = "diff --git a/src/Test.java b/src/Test.java\n+ int x = 1;\n"

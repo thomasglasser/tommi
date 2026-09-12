@@ -22,6 +22,7 @@ class TommiConfig:
     is_merged: bool = False
     comment_author: str = ""
     comment_author_type: str = ""
+    thinking_budget: Optional[int] = -1
 
     @classmethod
     def from_env(cls) -> "TommiConfig":
@@ -60,6 +61,13 @@ class TommiConfig:
         model_name = os.environ.get("MODEL_NAME", "auto").strip()
         tommi_repo = os.environ.get("TOMMI_REPO", "thomasglasser/tommi").strip()
 
+        thinking_budget_str = os.environ.get("THINKING_BUDGET", "-1").strip()
+        thinking_budget: Optional[int] = -1
+        if thinking_budget_str.lower() in ("auto", "none", "", "-1"):
+            thinking_budget = -1
+        elif thinking_budget_str.lstrip("-").isdigit():
+            thinking_budget = int(thinking_budget_str)
+
         return cls(
             gemini_api_key=gemini_api_key,
             github_repository=github_repository,
@@ -78,4 +86,5 @@ class TommiConfig:
             is_merged=is_merged,
             comment_author=comment_author,
             comment_author_type=comment_author_type,
+            thinking_budget=thinking_budget,
         )
