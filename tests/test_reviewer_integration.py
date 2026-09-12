@@ -297,6 +297,57 @@ End of review."""
         self.assertEqual(res[0]["path"], "src/Foo.java")
         self.assertEqual(res[0]["body"], "Valid comment")
 
+    def test_parse_and_repair_json_with_thoughts_code_and_trailing_brackets_braces(self):
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client"):
+            reviewer = TommiReviewer(config)
+
+        # Simulates Gemini returning thoughts/Java code before the array and Markdown links/braces after the array
+        text = """Checking the method .findAllBlockEntities(level)) {
+    Level blockLevel = blockEntity.getLevel();
+    if (blockLevel != null) {
+        BlockPos pos = blockEntity.getBlockPos();
+    }
+}
+Now here is the review:
+[
+  {
+    "path": "src/Foo.java",
+    "line": 10,
+    "body": "Fix this issue",
+    "severity": "WARNING"
+  }
+]
+Hope this helps! See [guidelines] {docs}."""
+        res = reviewer._parse_and_repair_json(text)
+        self.assertEqual(len(res), 1)
+        self.assertEqual(res[0]["path"], "src/Foo.java")
+        self.assertEqual(res[0]["line"], 10)
+        self.assertEqual(res[0]["body"], "Fix this issue")
+
+    def test_extract_response_text_filters_thought_parts(self):
+        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
+        with patch("src.reviewer.genai.Client"):
+            reviewer = TommiReviewer(config)
+
+        mock_resp = MagicMock()
+        thought_part = MagicMock()
+        thought_part.thought = True
+        thought_part.text = "Thinking about .findAllBlockEntities()..."
+
+        content_part = MagicMock()
+        content_part.thought = False
+        content_part.text = '[{"path": "Test.java", "line": 1, "body": "OK", "severity": "WARNING"}]'
+
+        candidate = MagicMock()
+        candidate.finish_reason = "STOP"
+        candidate.content.parts = [thought_part, content_part]
+        mock_resp.candidates = [candidate]
+
+        extracted = reviewer._extract_response_text(mock_resp)
+        self.assertEqual(extracted, '[{"path": "Test.java", "line": 1, "body": "OK", "severity": "WARNING"}]')
+        self.assertNotIn("Thinking about", extracted)
+
     def test_execute_review_generation_uses_application_json_mime_type(self):
         config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
         with patch("src.reviewer.genai.Client") as mock_client_cls:
@@ -316,6 +367,7 @@ End of review."""
             gen_config = call_args.kwargs.get("config")
             self.assertIsNotNone(gen_config)
             self.assertEqual(gen_config.response_mime_type, "application/json")
+            self.assertIsNotNone(gen_config.response_schema)
             self.assertIsNotNone(gen_config.thinking_config)
             self.assertEqual(gen_config.thinking_config.thinking_budget, -1)
 

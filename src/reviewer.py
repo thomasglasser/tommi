@@ -101,39 +101,61 @@ class TommiReviewer:
             clean_text = clean_text.rsplit("```", 1)[0]
         clean_text = clean_text.strip()
 
-        # 4. Search for valid JSON array or object substring in candidates
         candidates = [clean_text, text] if clean_text != text else [text]
+        decoder = json.JSONDecoder(strict=False)
+
+        # 4. Use raw_decode at every potential JSON array start
         for cand in candidates:
-            # Array starts: prefer '[{' or '[]' to avoid markdown links like '[Foo.java]'
             array_starts = [m.start() for m in re.finditer(r"\[\s*(?:\{|\])", cand)]
             if not array_starts and "[" in cand:
                 array_starts = [cand.find("[")]
 
             for start_idx in array_starts:
-                end_idx = cand.rfind("]")
-                if end_idx > start_idx:
+                try:
+                    obj, _ = decoder.raw_decode(cand, idx=start_idx)
+                    extracted = _extract_comments(obj)
+                    if extracted is not None:
+                        return extracted
+                except Exception:
+                    pass
+
+        # 5. Use raw_decode at every potential JSON object start
+        for cand in candidates:
+            object_starts = [m.start() for m in re.finditer(r"\{\s*\"(?:comments|reviews|review_comments|items|data|path)\"", cand)]
+            if not object_starts and "{" in cand:
+                object_starts = [cand.find("{")]
+
+            for start_idx in object_starts:
+                try:
+                    obj, _ = decoder.raw_decode(cand, idx=start_idx)
+                    extracted = _extract_comments(obj)
+                    if extracted is not None:
+                        return extracted
+                except Exception:
+                    pass
+
+        # 6. Fallback bracket matching: test closing brackets after start_idx in reverse
+        for cand in candidates:
+            array_starts = [m.start() for m in re.finditer(r"\[\s*(?:\{|\])", cand)]
+            if not array_starts and "[" in cand:
+                array_starts = [cand.find("[")]
+
+            for start_idx in array_starts:
+                bracket_positions = [i for i, char in enumerate(cand) if char == ']' and i > start_idx]
+                for end_idx in reversed(bracket_positions):
                     parsed = _try_parse(cand[start_idx:end_idx + 1])
                     if parsed is not None:
                         return parsed
 
-            # Object starts: '{'
-            start_idx = cand.find("{")
-            if start_idx != -1:
-                end_idx = cand.rfind("}")
-                if end_idx > start_idx:
-                    parsed = _try_parse(cand[start_idx:end_idx + 1])
-                    if parsed is not None:
-                        return parsed
-
-        # 5. Salvage truncated JSON array (e.g. if token limit cut off the last item)
+        # 7. Salvage truncated JSON array (e.g. if token limit cut off the last item)
         for cand in candidates:
             array_starts = [m.start() for m in re.finditer(r"\[\s*\{", cand)]
             if not array_starts and "[" in cand:
                 array_starts = [cand.find("[")]
 
             for start_idx in array_starts:
-                last_brace = cand.rfind("}")
-                if last_brace > start_idx:
+                brace_positions = [i for i, char in enumerate(cand) if char == '}' and i > start_idx]
+                for last_brace in reversed(brace_positions):
                     salvaged = _try_parse(cand[start_idx:last_brace + 1].strip() + "]")
                     if salvaged:
                         logger.warning(
@@ -141,8 +163,39 @@ class TommiReviewer:
                         )
                         return salvaged
 
-        # 6. If all parsing/salvage attempts fail, raise RuntimeError
+        # 8. If all parsing/salvage attempts fail, log preview and raise RuntimeError
+        logger.warning(f"Unparseable AI response text (first 2000 chars):\n{text[:2000]}")
         raise RuntimeError(f"Unable to parse AI review JSON response: {text[:200]}...")
+
+    def _extract_response_text(self, response: Any) -> str:
+        """
+        Extracts review output text from Gemini response, prioritizing non-thought text parts
+        and checking for token exhaustion.
+        """
+        if not response:
+            return ""
+
+        candidate = response.candidates[0] if (hasattr(response, "candidates") and response.candidates) else None
+        if not candidate:
+            return response.text.strip() if hasattr(response, "text") and response.text else ""
+
+        finish_reason = getattr(candidate, "finish_reason", None)
+        if finish_reason and "MAX_TOKENS" in str(finish_reason).upper():
+            logger.warning("Gemini generation hit MAX_TOKENS limit; output may be truncated.")
+
+        content = getattr(candidate, "content", None)
+        parts = getattr(content, "parts", None) if content else None
+        if parts:
+            text_parts = []
+            for part in parts:
+                is_thought = bool(getattr(part, "thought", False))
+                p_text = getattr(part, "text", None)
+                if isinstance(p_text, str) and p_text and not is_thought:
+                    text_parts.append(p_text)
+            if text_parts:
+                return "".join(text_parts).strip()
+
+        return response.text.strip() if hasattr(response, "text") and response.text else ""
 
     def _execute_review_generation(
         self,
@@ -170,6 +223,7 @@ class TommiReviewer:
                 gen_config.tools = tools_list
             else:
                 gen_config.response_mime_type = "application/json"
+                gen_config.response_schema = list[ReviewCommentItem]
 
             if self.config.thinking_budget is not None:
                 gen_config.thinking_config = types.ThinkingConfig(thinking_budget=self.config.thinking_budget)
@@ -181,15 +235,34 @@ class TommiReviewer:
                     config=gen_config,
                 )
             except Exception as gen_err:
-                if gen_config.thinking_config and ("thinking" in str(gen_err).lower() or "unsupported" in str(gen_err).lower()):
+                response = None
+                err_str = str(gen_err).lower()
+                if gen_config.response_schema and ("schema" in err_str or "unsupported" in err_str):
+                    logger.info(f"Model '{model_name}' does not support response_schema. Retrying without response_schema...")
+                    gen_config.response_schema = None
+                    try:
+                        response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=gen_config,
+                        )
+                    except Exception as schema_retry_err:
+                        gen_err = schema_retry_err
+                        err_str = str(gen_err).lower()
+
+                if response is None and gen_config.thinking_config and ("thinking" in err_str or "budget" in err_str or "unsupported" in err_str):
                     logger.info(f"Model '{model_name}' does not support thinking_config. Retrying without thinking_config...")
                     gen_config.thinking_config = None
-                    response = self.client.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                        config=gen_config,
-                    )
-                else:
+                    try:
+                        response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=gen_config,
+                        )
+                    except Exception as thinking_retry_err:
+                        gen_err = thinking_retry_err
+
+                if response is None:
                     raise gen_err
 
             # Check if Gemini returned function calls
@@ -215,7 +288,7 @@ class TommiReviewer:
 
             if not function_calls:
                 # No more tool calls, return text
-                return response.text.strip() if response and response.text else ""
+                return self._extract_response_text(response)
 
             # Execute tool calls
             tool_response_parts = []
@@ -261,6 +334,7 @@ class TommiReviewer:
             temperature=0.15,
             max_output_tokens=65536,
             response_mime_type="application/json",
+            response_schema=list[ReviewCommentItem],
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
         if self.config.thinking_budget is not None:
@@ -273,17 +347,36 @@ class TommiReviewer:
                 config=final_config,
             )
         except Exception as gen_err:
-            if final_config.thinking_config and ("thinking" in str(gen_err).lower() or "unsupported" in str(gen_err).lower()):
+            final_response = None
+            err_str = str(gen_err).lower()
+            if final_config.response_schema and ("schema" in err_str or "unsupported" in err_str):
+                logger.info(f"Model '{model_name}' does not support response_schema on final turn. Retrying without response_schema...")
+                final_config.response_schema = None
+                try:
+                    final_response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=final_config,
+                    )
+                except Exception as final_schema_retry_err:
+                    gen_err = final_schema_retry_err
+                    err_str = str(gen_err).lower()
+
+            if final_response is None and final_config.thinking_config and ("thinking" in err_str or "budget" in err_str or "unsupported" in err_str):
                 logger.info(f"Model '{model_name}' does not support thinking_config on final turn. Retrying without thinking_config...")
                 final_config.thinking_config = None
-                final_response = self.client.models.generate_content(
-                    model=model_name,
-                    contents=contents,
-                    config=final_config,
-                )
-            else:
+                try:
+                    final_response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=final_config,
+                    )
+                except Exception as final_thinking_retry_err:
+                    gen_err = final_thinking_retry_err
+
+            if final_response is None:
                 raise gen_err
-        return final_response.text.strip() if final_response and final_response.text else ""
+        return self._extract_response_text(final_response)
 
     def review_pr(self, pr_title: str, pr_body: str, pr_url: str, enable_tools: bool = False) -> List[Dict[str, Any]]:
         """
