@@ -527,7 +527,7 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
    - Improper API / collection usage (e.g. standard `ArrayList` instead of FastUtil, streams in hot paths).
    - Missing null checks or safety guards where nullability is ambiguous.
 3. **SUGGESTION**:
-   - Minor code style, naming conventions (abbreviations, non-descriptive variable names), class layout ordering, dead code, single-use variables needing inlining, or javadoc formatting.
+   - Minor code style, naming conventions (abbreviations, non-descriptive variable names), American English spelling and grammar issues (in identifiers, comments, and Javadocs), class layout ordering, dead code, single-use variables needing inlining, or javadoc formatting.
 
 ### INSTRUCTIONS & SUGGESTION FORMAT:
 1. Review the entire diff thoroughly and comprehensively. Do NOT artificially limit or truncate the number of comments—report ALL genuine violations, bugs, side-safety issues, performance regressions, and style breaches found across all modified files and hunks.

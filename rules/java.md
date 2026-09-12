@@ -27,3 +27,4 @@
   * Class javadocs are expected on APIs and core abstractions, but implementation details (`impl`) do not need them unless necessary.
   * Place separate sentences on separate lines within javadocs.
   * Place javadocs on the methods/classes themselves, not on registry entries.
+  * ALWAYS adhere to standard American English spelling and grammar in Javadocs, comments, and parameter descriptions.
