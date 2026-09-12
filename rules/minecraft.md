@@ -59,6 +59,8 @@
 
 ## 5. APIs
 
+* **ItemDestroyedEvent Stack Parameters**: Do NOT flag `event.getStack()` or item stack variables in `ItemDestroyedEvent` as representing destruction byproducts or replacement items (such as Cataclysm dust); the passed stack is the actual item currently being destroyed.
+
 * **ItemEntity Empty Stack Discarding**: Do NOT flag or suggest calling `discard()` on an `ItemEntity` when setting its stack to empty or clearing its slot; `ItemEntity` automatically checks if its stack is empty during its tick and handles discarding itself.
 
 * **hasEffect Usage**: Do NOT flag `entity.hasEffect(...)` as an anti-pattern or check effect pattern violation when `entity.getEffect(...)` is not subsequently called and the `MobEffectInstance` itself is not used.
