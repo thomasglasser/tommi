@@ -56,6 +56,8 @@
 
 ## 4. Git & Review Etiquette
 
+* **Accurate Control Flow & Missing Returns**: NEVER claim execution continues past a statement or that a code branch is missing an early `return` or `break` (e.g., after `entity.discard()`, cleanup, or terminal calls) without thoroughly verifying the entire method body outside the diff hunk. Do NOT suggest redundant `return` statements when no further code executes in that branch or method.
+
 * **Accurate Invocation & Member Usage Checks**: NEVER claim a method, field, or helper is unused, never invoked, or missing from execution paths without thoroughly verifying the entire file and class, including unchanged lines outside the diff hunk. Do NOT assert that a method is never called or suggest adding invocations without confirming it is genuinely absent everywhere.
 * **Pay Attention to IDE Warnings**: Never ignore yellow/red IDE warnings (e.g., comparing `ResourceKey` to `ResourceLocation`).
 * **Self-Review**: Contributors MUST review their own PR diff before requesting review.
