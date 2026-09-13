@@ -56,6 +56,43 @@ class TestConfig(unittest.TestCase):
     def test_thinking_budget_auto(self):
         cfg = TommiConfig.from_env()
         self.assertEqual(cfg.thinking_budget, -1)
+        self.assertEqual(cfg.thinking_level, "HIGH")
+
+    @patch.dict(os.environ, {
+        "GITHUB_TOKEN": "ghp_test123",
+        "GEMINI_API_KEY": "gemini_test456",
+        "GITHUB_REPOSITORY": "thomasglasser/Mineraculous",
+        "PR_NUMBER": "42",
+        "THINKING_LEVEL": "medium",
+    })
+    def test_thinking_level_medium(self):
+        cfg = TommiConfig.from_env()
+        self.assertEqual(cfg.thinking_level, "MEDIUM")
+        self.assertEqual(cfg.thinking_budget, 8192)
+
+    @patch.dict(os.environ, {
+        "GITHUB_TOKEN": "ghp_test123",
+        "GEMINI_API_KEY": "gemini_test456",
+        "GITHUB_REPOSITORY": "thomasglasser/Mineraculous",
+        "PR_NUMBER": "42",
+        "THINKING_LEVEL": "low",
+    })
+    def test_thinking_level_low(self):
+        cfg = TommiConfig.from_env()
+        self.assertEqual(cfg.thinking_level, "LOW")
+        self.assertEqual(cfg.thinking_budget, 2048)
+
+    @patch.dict(os.environ, {
+        "GITHUB_TOKEN": "ghp_test123",
+        "GEMINI_API_KEY": "gemini_test456",
+        "GITHUB_REPOSITORY": "thomasglasser/Mineraculous",
+        "PR_NUMBER": "42",
+        "THINKING_LEVEL": "off",
+    })
+    def test_thinking_level_off(self):
+        cfg = TommiConfig.from_env()
+        self.assertIsNone(cfg.thinking_level)
+        self.assertEqual(cfg.thinking_budget, 0)
 
     @patch.dict(os.environ, {
         "APP_ID": "123456",

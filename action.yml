@@ -26,10 +26,14 @@ inputs:
     description: 'Gemini model to use for analysis (default: auto - automatically discovers the newest Flash model)'
     required: false
     default: 'auto'
-  thinking-budget:
-    description: 'Thinking budget in tokens for Gemini thinking models (-1 for unlimited/auto thinking, 0 to disable, or a token count; default: -1)'
+  thinking-level:
+    description: 'Reasoning depth level for Gemini thinking models (high, medium, low, minimal, off; default: high for maximum intelligence)'
     required: false
-    default: '-1'
+    default: 'high'
+  thinking-budget:
+    description: 'Thinking budget in tokens or reasoning level for Gemini thinking models (high, medium, low, minimal, off, -1 for auto/unlimited, 0 to disable, or token count; default: high)'
+    required: false
+    default: 'high'
   tommi-repo:
     description: 'Repository name where central TOMMI rules are hosted'
     required: false
@@ -56,6 +60,7 @@ runs:
         PRIVATE_KEY: ${{ inputs.private-key }}
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
         MODEL_NAME: ${{ inputs.model }}
+        THINKING_LEVEL: ${{ inputs.thinking-level }}
         THINKING_BUDGET: ${{ inputs.thinking-budget }}
         TOMMI_REPO: ${{ inputs.tommi-repo }}
         GITHUB_REPOSITORY: ${{ github.repository }}

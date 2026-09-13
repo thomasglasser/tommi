@@ -23,6 +23,7 @@ class TommiConfig:
     comment_author: str = ""
     comment_author_type: str = ""
     thinking_budget: Optional[int] = -1
+    thinking_level: Optional[str] = "HIGH"
 
     @classmethod
     def from_env(cls) -> "TommiConfig":
@@ -61,12 +62,37 @@ class TommiConfig:
         model_name = os.environ.get("MODEL_NAME", "auto").strip()
         tommi_repo = os.environ.get("TOMMI_REPO", "thomasglasser/tommi").strip()
 
-        thinking_budget_str = os.environ.get("THINKING_BUDGET", "-1").strip()
+        # Parse reasoning levels (high, medium, low, minimal, off, auto) or explicit token budgets
+        raw_level = os.environ.get("THINKING_LEVEL", "").strip()
+        raw_budget = os.environ.get("THINKING_BUDGET", "").strip()
+
+        val = raw_level or raw_budget or "high"
+        val_lower = val.lower()
+
+        thinking_level: Optional[str] = "HIGH"
         thinking_budget: Optional[int] = -1
-        if thinking_budget_str.lower() in ("auto", "none", "", "-1"):
+
+        if val_lower in ("off", "0", "disable", "disabled", "false"):
+            thinking_level = None
+            thinking_budget = 0
+        elif val_lower in ("high", "max", "unlimited"):
+            thinking_level = "HIGH"
             thinking_budget = -1
-        elif thinking_budget_str.lstrip("-").isdigit():
-            thinking_budget = int(thinking_budget_str)
+        elif val_lower in ("medium", "med"):
+            thinking_level = "MEDIUM"
+            thinking_budget = 8192
+        elif val_lower == "low":
+            thinking_level = "LOW"
+            thinking_budget = 2048
+        elif val_lower == "minimal":
+            thinking_level = "MINIMAL"
+            thinking_budget = 1024
+        elif val_lower in ("auto", "none", "", "-1"):
+            thinking_level = "HIGH"
+            thinking_budget = -1
+        elif val.lstrip("-").isdigit():
+            thinking_budget = int(val)
+            thinking_level = "HIGH" if thinking_budget == -1 else None
 
         return cls(
             gemini_api_key=gemini_api_key,
@@ -87,4 +113,5 @@ class TommiConfig:
             comment_author=comment_author,
             comment_author_type=comment_author_type,
             thinking_budget=thinking_budget,
+            thinking_level=thinking_level,
         )

@@ -197,6 +197,29 @@ class TommiReviewer:
 
         return response.text.strip() if hasattr(response, "text") and response.text else ""
 
+    def _create_thinking_config(self) -> Optional[types.ThinkingConfig]:
+        """
+        Builds a ThinkingConfig supporting thinking_level (HIGH/MEDIUM/LOW/MINIMAL) and thinking_budget.
+        """
+        budget = self.config.thinking_budget
+        level_str = getattr(self.config, "thinking_level", None)
+
+        if budget == 0 and not level_str:
+            return None
+
+        kwargs = {}
+        if level_str:
+            level_enum = getattr(types.ThinkingLevel, level_str.upper(), None)
+            if level_enum:
+                kwargs["thinking_level"] = level_enum
+
+        if budget is not None:
+            kwargs["thinking_budget"] = budget
+
+        if kwargs:
+            return types.ThinkingConfig(**kwargs)
+        return None
+
     def _execute_review_generation(
         self,
         model_name: str,
@@ -225,8 +248,7 @@ class TommiReviewer:
                 gen_config.response_mime_type = "application/json"
                 gen_config.response_schema = list[ReviewCommentItem]
 
-            if self.config.thinking_budget is not None:
-                gen_config.thinking_config = types.ThinkingConfig(thinking_budget=self.config.thinking_budget)
+            gen_config.thinking_config = self._create_thinking_config()
 
             try:
                 response = self.client.models.generate_content(
@@ -250,17 +272,31 @@ class TommiReviewer:
                         gen_err = schema_retry_err
                         err_str = str(gen_err).lower()
 
-                if response is None and gen_config.thinking_config and ("thinking" in err_str or "budget" in err_str or "unsupported" in err_str):
-                    logger.info(f"Model '{model_name}' does not support thinking_config. Retrying without thinking_config...")
-                    gen_config.thinking_config = None
-                    try:
-                        response = self.client.models.generate_content(
-                            model=model_name,
-                            contents=contents,
-                            config=gen_config,
-                        )
-                    except Exception as thinking_retry_err:
-                        gen_err = thinking_retry_err
+                if response is None and gen_config.thinking_config and ("thinking" in err_str or "budget" in err_str or "level" in err_str or "unsupported" in err_str):
+                    if getattr(gen_config.thinking_config, "thinking_level", None) and getattr(gen_config.thinking_config, "thinking_budget", None) is not None:
+                        logger.info(f"Model '{model_name}' rejected combined thinking config. Retrying with thinking_budget only...")
+                        gen_config.thinking_config = types.ThinkingConfig(thinking_budget=gen_config.thinking_config.thinking_budget)
+                        try:
+                            response = self.client.models.generate_content(
+                                model=model_name,
+                                contents=contents,
+                                config=gen_config,
+                            )
+                        except Exception as budget_retry_err:
+                            gen_err = budget_retry_err
+                            err_str = str(gen_err).lower()
+
+                    if response is None and gen_config.thinking_config and ("thinking" in err_str or "budget" in err_str or "level" in err_str or "unsupported" in err_str):
+                        logger.info(f"Model '{model_name}' does not support thinking_config. Retrying without thinking_config...")
+                        gen_config.thinking_config = None
+                        try:
+                            response = self.client.models.generate_content(
+                                model=model_name,
+                                contents=contents,
+                                config=gen_config,
+                            )
+                        except Exception as thinking_retry_err:
+                            gen_err = thinking_retry_err
 
                 if response is None:
                     raise gen_err
@@ -337,8 +373,7 @@ class TommiReviewer:
             response_schema=list[ReviewCommentItem],
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
-        if self.config.thinking_budget is not None:
-            final_config.thinking_config = types.ThinkingConfig(thinking_budget=self.config.thinking_budget)
+        final_config.thinking_config = self._create_thinking_config()
 
         try:
             final_response = self.client.models.generate_content(
@@ -362,17 +397,31 @@ class TommiReviewer:
                     gen_err = final_schema_retry_err
                     err_str = str(gen_err).lower()
 
-            if final_response is None and final_config.thinking_config and ("thinking" in err_str or "budget" in err_str or "unsupported" in err_str):
-                logger.info(f"Model '{model_name}' does not support thinking_config on final turn. Retrying without thinking_config...")
-                final_config.thinking_config = None
-                try:
-                    final_response = self.client.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                        config=final_config,
-                    )
-                except Exception as final_thinking_retry_err:
-                    gen_err = final_thinking_retry_err
+            if final_response is None and final_config.thinking_config and ("thinking" in err_str or "budget" in err_str or "level" in err_str or "unsupported" in err_str):
+                if getattr(final_config.thinking_config, "thinking_level", None) and getattr(final_config.thinking_config, "thinking_budget", None) is not None:
+                    logger.info(f"Model '{model_name}' rejected combined thinking config on final turn. Retrying with thinking_budget only...")
+                    final_config.thinking_config = types.ThinkingConfig(thinking_budget=final_config.thinking_config.thinking_budget)
+                    try:
+                        final_response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=final_config,
+                        )
+                    except Exception as final_budget_retry_err:
+                        gen_err = final_budget_retry_err
+                        err_str = str(gen_err).lower()
+
+                if final_response is None and final_config.thinking_config and ("thinking" in err_str or "budget" in err_str or "level" in err_str or "unsupported" in err_str):
+                    logger.info(f"Model '{model_name}' does not support thinking_config on final turn. Retrying without thinking_config...")
+                    final_config.thinking_config = None
+                    try:
+                        final_response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=final_config,
+                        )
+                    except Exception as final_thinking_retry_err:
+                        gen_err = final_thinking_retry_err
 
             if final_response is None:
                 raise gen_err
