@@ -11,6 +11,8 @@
 
 ## 2. Language Features & APIs
 
+* **Javadoc Scope**: Javadocs are NOT required on private members, private helper methods, or private inner classes/records. Do NOT suggest adding Javadocs to private members.
+
 * **Single-Line vs. Multi-Line Javadocs**: Use `///` EXCLUSIVELY for single-line Javadocs. Multi-line Javadocs MUST use standard `/** ... */` block syntax. NEVER use or suggest `///` for multi-line comments, and NEVER suggest converting multi-line `/** ... */` Javadocs to `///`.
 
 * **Collection & Iterable forEach**: Do NOT flag `.forEach(...)` calls on collections or iterables with single-statement lambdas as anti-patterns or suggest converting them to enhanced for-loops outside of per-tick hot paths; single-statement `forEach` calls are acceptable.
