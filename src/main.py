@@ -1,5 +1,7 @@
 import logging
+import subprocess
 import sys
+from typing import Optional, Tuple
 from github import Github
 
 from src.config import TommiConfig
@@ -76,7 +78,7 @@ def main():
 
     pr = commenter.pr
 
-    if config.comment_id and not (config.event_name == "pull_request" and config.is_merged):
+    if config.comment_id and not (config.event_name in ("pull_request", "pull_request_target") and config.is_merged):
         try:
             target_comment = pr.get_issue_comment(config.comment_id) if config.event_name == "issue_comment" else pr.get_comment(config.comment_id)
             if target_comment and target_comment.user:
@@ -103,7 +105,6 @@ def main():
     # Synchronize workspace to PR head commit if inside a git repository
     if hasattr(pr, "head") and pr.head and hasattr(pr.head, "sha") and isinstance(pr.head.sha, str) and pr.head.sha:
         try:
-            import subprocess
             subprocess.run(["git", "fetch", "--depth=1", "origin", pr.head.sha], check=True, capture_output=True, timeout=30)
             subprocess.run(["git", "checkout", "--detach", pr.head.sha], check=True, capture_output=True, timeout=15)
             logger.info(f"Synchronized workspace to PR #{config.pr_number} head ({pr.head.sha[:8]}).")
@@ -112,7 +113,7 @@ def main():
 
     # 2. Determine action based on event and command
     try:
-        if config.event_name == "pull_request" and config.is_merged:
+        if config.event_name in ("pull_request", "pull_request_target") and config.is_merged:
             # Post-Merge Review Learning Mode
             logger.info(f"Triggered post-merge rule learning on PR #{config.pr_number} ({config.github_repository})")
             reviewer_instance = TommiReviewer(config=config, auth_token=target_token)
@@ -220,7 +221,7 @@ def main():
             commenter.add_reaction("hooray")
             logger.info("Successfully processed learning feedback.")
 
-        elif cmd_type == "review" or config.event_name == "pull_request":
+        elif cmd_type == "review" or config.event_name in ("pull_request", "pull_request_target"):
             # Code Review Mode (Comment or Automatic on PR Event)
             reviewer = TommiReviewer(config=config, auth_token=target_token)
             comments = reviewer.review_pr(

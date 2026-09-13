@@ -1,7 +1,10 @@
 import glob
+import logging
 import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
+
+logger = logging.getLogger("tommi.rules")
 
 
 @dataclass
@@ -60,7 +63,7 @@ def load_all_rules(repo_workspace_dir: Optional[str] = None, tommi_rules_dir: Op
                 with open(rule_file, "r", encoding="utf-8") as f:
                     base_rules[name] = f.read()
             except Exception as e:
-                print(f"Warning: Failed to read base rule file {rule_file}: {e}")
+                logger.warning(f"Failed to read base rule file {rule_file}: {e}")
 
     # 2. Resolve target repository workspace directory
     workspace = repo_workspace_dir or os.environ.get("GITHUB_WORKSPACE", os.getcwd())
@@ -84,7 +87,7 @@ def load_all_rules(repo_workspace_dir: Optional[str] = None, tommi_rules_dir: Op
                     if content:
                         local_rules[label] = content
             except Exception as e:
-                print(f"Warning: Failed to read local rule file {candidate_path}: {e}")
+                logger.warning(f"Failed to read local rule file {candidate_path}: {e}")
 
     # Check for .agents/rules/*.md
     agents_rules_pattern = os.path.join(workspace, ".agents", "rules", "*.md")
@@ -96,6 +99,6 @@ def load_all_rules(repo_workspace_dir: Optional[str] = None, tommi_rules_dir: Op
                 if content:
                     local_rules[rel_name] = content
         except Exception as e:
-            print(f"Warning: Failed to read local agent rule {rule_file}: {e}")
+            logger.warning(f"Failed to read local agent rule {rule_file}: {e}")
 
     return LoadedRules(base_rules=base_rules, local_rules=local_rules)

@@ -33,5 +33,37 @@ class TestDiffEdgeCases(unittest.TestCase):
         parsed = parse_unified_diff("")
         self.assertEqual(len(parsed.files), 0)
 
+    def test_diff_header_does_not_add_line_zero(self):
+        parsed = parse_unified_diff(MULTI_FILE_DIFF)
+        self.assertNotIn(0, parsed.files["src/First.java"])
+        self.assertNotIn(0, parsed.files["src/Second.java"])
+
+    def test_diff_paths_with_spaces_and_quotes(self):
+        from src.diff_parser import extract_diff_git_path, filter_diff_for_review
+
+        diff_with_spaces = """diff --git a/src/path with space/My Class.java b/src/path with space/My Class.java
+index 1111111..2222222 100644
+--- a/src/path with space/My Class.java
++++ b/src/path with space/My Class.java
+@@ -1,2 +1,3 @@
+ public class MyClass {
++    int val = 42;
+ }
+"""
+        parsed = parse_unified_diff(diff_with_spaces)
+        expected_path = "src/path with space/My Class.java"
+        self.assertIn(expected_path, parsed.files)
+        self.assertTrue(parsed.is_line_in_diff(expected_path, 2))
+        self.assertNotIn(0, parsed.files[expected_path])
+
+        # Quoted path
+        quoted_header = 'diff --git "a/src/path with space/Quoted Class.java" "b/src/path with space/Quoted Class.java"'
+        self.assertEqual(extract_diff_git_path(quoted_header), "src/path with space/Quoted Class.java")
+
+        # Filter diff preserves reviewable files with spaces
+        filtered = filter_diff_for_review(diff_with_spaces)
+        self.assertIn("src/path with space/My Class.java", filtered)
+
+
 if __name__ == "__main__":
     unittest.main()

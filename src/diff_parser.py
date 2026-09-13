@@ -140,6 +140,33 @@ class ParsedDiff:
         return None
 
 
+def extract_diff_git_path(line: str) -> Optional[str]:
+    """
+    Extracts the destination (b/) file path from a 'diff --git a/... b/...' header line.
+    Handles standard paths, paths with spaces, and quoted paths.
+    """
+    if not line.startswith("diff --git "):
+        return None
+    rest = line[11:].strip()
+    # Check for quoted paths: "a/..." "b/..."
+    if rest.startswith('"'):
+        m = re.match(r'^"(?:a/)?(.*?)"\s+"(?:b/)?(.*?)"$', rest)
+        if m:
+            path = m.group(2)
+            return path[2:] if path.startswith("b/") else path
+    # Check for standard git diff delimiter ' b/'
+    if " b/" in rest:
+        b_path = rest.split(" b/", 1)[1].strip()
+        if b_path.startswith('"') and b_path.endswith('"'):
+            b_path = b_path[1:-1]
+        return b_path
+    parts = rest.split(" ")
+    if len(parts) >= 2:
+        dest = parts[-1].strip().strip('"')
+        return dest[2:] if dest.startswith("b/") else dest
+    return None
+
+
 def parse_unified_diff(diff_text: str, filter_non_code: bool = True) -> ParsedDiff:
     """
     Parses a unified diff and extracts all valid new line numbers (RIGHT side) and line contents
@@ -157,20 +184,17 @@ def parse_unified_diff(diff_text: str, filter_non_code: bool = True) -> ParsedDi
     for line in diff_text.splitlines():
         if line.startswith("diff --git "):
             in_hunk = False
-            parts = line.split(" ")
-            if len(parts) >= 4:
-                b_path = parts[3]
-                if b_path.startswith("b/"):
-                    current_file = b_path[2:]
-                else:
-                    current_file = b_path
-
+            current_file = extract_diff_git_path(line)
+            if current_file:
                 is_current_file_reviewable = not filter_non_code or is_reviewable_file(current_file)
                 if is_current_file_reviewable:
                     files[current_file] = set()
                     line_contents[current_file] = {}
                 else:
                     current_file = None
+            else:
+                is_current_file_reviewable = False
+                current_file = None
             continue
 
         if current_file is None or not is_current_file_reviewable:
@@ -261,11 +285,9 @@ def filter_diff_for_review(diff_text: str) -> str:
             if current_chunk and include_current:
                 filtered_chunks.append("\n".join(current_chunk))
             current_chunk = [line]
-            parts = line.split(" ")
-            if len(parts) >= 4:
-                b_path = parts[3]
-                path = b_path[2:] if b_path.startswith("b/") else b_path
-                include_current = is_reviewable_file(path)
+            dest_file = extract_diff_git_path(line)
+            if dest_file:
+                include_current = is_reviewable_file(dest_file)
             else:
                 include_current = True
         else:

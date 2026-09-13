@@ -169,7 +169,14 @@ class GitHubCommenter:
             severity = item.get("severity", "WARNING")
             is_valid_line = item.get("is_valid_line", True)
 
-            if not path or not line or not body:
+            if not path or line is None or not body:
+                continue
+
+            try:
+                line_int = int(line)
+                if line_int <= 0:
+                    continue
+            except (ValueError, TypeError):
                 continue
 
             if not is_valid_line:
@@ -183,7 +190,7 @@ class GitHubCommenter:
                     body=formatted_body,
                     commit=latest_commit,
                     path=path,
-                    line=int(line),
+                    line=line_int,
                     side="RIGHT"
                 )
                 placed_count += 1

@@ -563,7 +563,7 @@ class TommiReviewer:
         full_files_context = []
         if parsed_diff and parsed_diff.files:
             for file_path, lines_set in list(parsed_diff.files.items())[:15]:
-                content = self.inspector.get_hunk_context(file_path, changed_lines=list(lines_set), padding=40)
+                content = self.inspector.get_hunk_context(file_path, changed_lines=list(lines_set), padding=100)
                 if not content.startswith("Error:"):
                     full_files_context.append(content)
 

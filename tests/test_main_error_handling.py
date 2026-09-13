@@ -324,6 +324,33 @@ class TestMainErrorHandling(unittest.TestCase):
         self.assertIn("review_pr", call_order)
         self.assertLess(call_order.index("reaction:eyes"), call_order.index("review_pr"))
 
+    @patch("src.main.GitHubCommenter")
+    @patch("src.main.GitHubAuthManager")
+    @patch("src.main.TommiConfig.from_env")
+    @patch("src.main.TommiReviewer")
+    def test_main_handles_pull_request_target_event(self, mock_reviewer_cls, mock_from_env, mock_auth_cls, mock_commenter_cls):
+        mock_config = MagicMock()
+        mock_config.event_name = "pull_request_target"
+        mock_config.is_merged = False
+        mock_config.comment_body = ""
+        mock_config.github_repository = "test/repo"
+        mock_config.pr_number = 42
+        mock_config.comment_id = None
+        mock_from_env.return_value = mock_config
+
+        mock_commenter = MagicMock()
+        mock_commenter_cls.return_value = mock_commenter
+
+        mock_reviewer = MagicMock()
+        mock_reviewer.review_pr.return_value = []
+        mock_reviewer_cls.return_value = mock_reviewer
+
+        main()
+
+        mock_reviewer.review_pr.assert_called_once()
+        mock_commenter.add_reaction.assert_any_call("eyes")
+        mock_commenter.add_reaction.assert_any_call("rocket")
+
 
 if __name__ == "__main__":
     unittest.main()
