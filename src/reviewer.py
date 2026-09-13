@@ -9,7 +9,7 @@ from google.genai import types
 from pydantic import BaseModel, Field
 
 from src.config import TommiConfig
-from src.diff_parser import parse_unified_diff, ParsedDiff, filter_diff_for_review, format_annotated_diff
+from src.diff_parser import parse_unified_diff, ParsedDiff, filter_diff_for_review, format_annotated_diff, split_diff_into_batches
 from src.rules_loader import load_all_rules, LoadedRules
 from src.models_resolver import resolve_candidate_models, resolve_model_name
 from src.repo_tools import WorkspaceInspector
@@ -380,7 +380,8 @@ class TommiReviewer:
 
     def review_pr(self, pr_title: str, pr_body: str, pr_url: str, enable_tools: bool = False) -> List[Dict[str, Any]]:
         """
-        Executes code review analysis on the pull request with transient error retry and model candidate failover.
+        Executes code review analysis on the pull request with transient error retry,
+        automatic diff batching for large PRs, and model candidate failover.
         """
         logger.info(f"Fetching PR #{self.config.pr_number} diff...")
         diff_text = self.fetch_pr_diff(pr_url)
@@ -394,76 +395,108 @@ class TommiReviewer:
         rules = load_all_rules()
         candidate_models = resolve_candidate_models(self.client, self.config.model_name)
 
+        diff_batches = split_diff_into_batches(filtered_diff, max_files_per_batch=15, max_chars_per_batch=100_000)
         logger.info(f"Loaded rules ({len(rules.base_rules)} base modules, {len(rules.local_rules)} local files).")
-        annotated_diff = format_annotated_diff(filtered_diff)
-        prompt = self._build_review_prompt(pr_title, pr_body, annotated_diff, rules, parsed_diff=parsed_diff, enable_tools=enable_tools)
+        if len(diff_batches) > 1:
+            logger.info(f"PR #{self.config.pr_number} is large ({len(parsed_diff.files)} files, {len(filtered_diff)} chars). Split into {len(diff_batches)} review batches to maintain high attention and prevent quota exhaustion.")
 
-        comments_data = None
-        last_error = None
-        encountered_429 = False
-        encountered_503 = False
+        all_comments_data = []
+        preferred_model = None
 
-        for i, model_name in enumerate(candidate_models):
-            logger.info(f"Running Gemini review with model '{model_name}'...")
-            model_succeeded = False
-            max_attempts = 2
+        for b_idx, batch_diff in enumerate(diff_batches):
+            if len(diff_batches) > 1:
+                logger.info(f"--- Reviewing PR diff batch {b_idx + 1}/{len(diff_batches)} ({len(batch_diff)} chars) ---")
 
-            for attempt in range(max_attempts):
-                # Only use tools on attempt 0 if explicitly enabled; retry attempt always disables tools
-                use_tools = enable_tools if attempt == 0 else False
-                try:
-                    raw_json = self._execute_review_generation(model_name, prompt, enable_tools=use_tools)
-                    comments_data = self._parse_and_repair_json(raw_json)
-                    model_succeeded = True
-                    break
-                except Exception as e:
-                    error_str = str(e).lower()
-                    last_error = e
-                    is_503 = "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str
-                    is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str or "rate limit" in error_str or "too many requests" in error_str
+            batch_parsed_diff = parse_unified_diff(batch_diff)
+            batch_annotated_diff = format_annotated_diff(batch_diff)
+            batch_info = (b_idx + 1, len(diff_batches)) if len(diff_batches) > 1 else None
+            batch_prompt = self._build_review_prompt(
+                pr_title,
+                pr_body,
+                batch_annotated_diff,
+                rules,
+                parsed_diff=batch_parsed_diff,
+                enable_tools=enable_tools,
+                batch_info=batch_info,
+            )
 
-                    if is_503:
-                        encountered_503 = True
-                    if is_429:
-                        encountered_429 = True
+            models_to_try = list(candidate_models)
+            if preferred_model and preferred_model in models_to_try:
+                models_to_try.remove(preferred_model)
+                models_to_try.insert(0, preferred_model)
 
-                    if is_503 or is_429:
-                        if attempt < max_attempts - 1:
-                            backoff_sec = (attempt + 1) * 5
-                            logger.warning(
-                                f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'} on attempt {attempt + 1}. "
-                                f"Backing off for {backoff_sec}s before retrying..."
-                            )
-                            time.sleep(backoff_sec)
-                            continue
-                        else:
-                            logger.warning(f"Model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}.")
-                            break
-                    else:
-                        logger.warning(f"Generation or JSON parsing failed with model '{model_name}': {e}")
-                        if attempt < max_attempts - 1:
-                            time.sleep(2)
-                            continue
+            batch_comments = None
+            last_error = None
+            encountered_429 = False
+            encountered_503 = False
+
+            for i, model_name in enumerate(models_to_try):
+                logger.info(f"Running Gemini review with model '{model_name}'...")
+                model_succeeded = False
+                max_attempts = 2
+
+                for attempt in range(max_attempts):
+                    # Only use tools on attempt 0 if explicitly enabled; retry attempt always disables tools
+                    use_tools = enable_tools if attempt == 0 else False
+                    try:
+                        raw_json = self._execute_review_generation(model_name, batch_prompt, enable_tools=use_tools)
+                        batch_comments = self._parse_and_repair_json(raw_json)
+                        model_succeeded = True
+                        preferred_model = model_name
                         break
+                    except Exception as e:
+                        error_str = str(e).lower()
+                        last_error = e
+                        is_503 = "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str
+                        is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str or "rate limit" in error_str or "too many requests" in error_str
 
-            if model_succeeded and comments_data is not None:
-                break
-            elif i < len(candidate_models) - 1:
-                if encountered_429 or encountered_503:
-                    time.sleep(3)
-                logger.info(f"Failing over to next candidate model '{candidate_models[i + 1]}'...")
+                        if is_503:
+                            encountered_503 = True
+                        if is_429:
+                            encountered_429 = True
 
-        if comments_data is None:
-            if encountered_429:
-                raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota / rate limit. Please try again later.")
-            elif encountered_503:
-                raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.")
-            elif last_error:
-                raise RuntimeError(f"Failed to generate or parse AI review response: {last_error}") from last_error
-            raise RuntimeError("Failed to obtain response from Gemini API.")
+                        if is_503 or is_429:
+                            if attempt < max_attempts - 1:
+                                backoff_sec = (attempt + 1) * 15
+                                logger.warning(
+                                    f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
+                                    f"Backing off for {backoff_sec}s before retrying..."
+                                )
+                                time.sleep(backoff_sec)
+                                continue
+                            else:
+                                logger.warning(f"Model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}: {e}")
+                                break
+                        else:
+                            logger.warning(f"Generation or JSON parsing failed with model '{model_name}': {e}")
+                            if attempt < max_attempts - 1:
+                                time.sleep(2)
+                                continue
+                            break
+
+                if model_succeeded and batch_comments is not None:
+                    break
+                elif i < len(models_to_try) - 1:
+                    if encountered_429 or encountered_503:
+                        time.sleep(5)
+                    logger.info(f"Failing over to next candidate model '{models_to_try[i + 1]}'...")
+
+            if batch_comments is None:
+                if encountered_429:
+                    raise QuotaExceededException(f"T.O.M.M.I. has run out of AI API quota / rate limit on batch {b_idx + 1}. Please try again later.")
+                elif encountered_503:
+                    raise HighDemandException(f"T.O.M.M.I. is currently experiencing high demand on batch {b_idx + 1}. Please try again in a few moments.")
+                elif last_error:
+                    raise RuntimeError(f"Failed to generate or parse AI review response on batch {b_idx + 1}: {last_error}") from last_error
+                raise RuntimeError("Failed to obtain response from Gemini API.")
+
+            all_comments_data.extend(batch_comments)
+
+            if b_idx < len(diff_batches) - 1:
+                time.sleep(2)
 
         # Validate, adjust line numbers, and sort by severity priority
-        validated_comments = self._validate_comments(comments_data, parsed_diff)
+        validated_comments = self._validate_comments(all_comments_data, parsed_diff)
         return validated_comments
 
     def _build_review_prompt(
@@ -473,7 +506,8 @@ class TommiReviewer:
         diff_text: str,
         rules: LoadedRules,
         parsed_diff: Optional[ParsedDiff] = None,
-        enable_tools: bool = False
+        enable_tools: bool = False,
+        batch_info: Optional[tuple[int, int]] = None,
     ) -> str:
         formatted_rules = rules.format_for_prompt()
 
@@ -487,6 +521,11 @@ class TommiReviewer:
         full_files_section = ""
         if full_files_context:
             full_files_section = "### MODIFIED FILES SURROUNDING SOURCE CODE (from checked-out repository):\n" + "\n\n".join(full_files_context) + "\n\n"
+
+        batch_header = ""
+        if batch_info:
+            curr_b, total_b = batch_info
+            batch_header = f"\n- **Review Batch**: Part {curr_b} of {total_b} (focus specifically on the files in this batch diff)"
 
         tools_section = ""
         if enable_tools:
@@ -508,7 +547,7 @@ You are reviewing a Pull Request in one of your repositories.
 
 ### PULL REQUEST INFORMATION:
 - **Title**: {pr_title}
-- **Description**: {pr_body or '(No description provided)'}
+- **Description**: {pr_body or '(No description provided)'}{batch_header}
 
 {full_files_section}### PULL REQUEST DIFF (Annotated with target line numbers on left):
 ```diff

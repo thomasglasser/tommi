@@ -5,8 +5,8 @@ from typing import Dict, List, Optional, Set
 
 IGNORED_DIFF_EXTENSIONS = {
     ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".webp",
-    ".jar", ".zip", ".gz", ".tar", ".bin",
-    ".lock", ".lockfile", ".map", ".min.js", ".min.css",
+    ".jar", ".zip", ".gz", ".tar", ".bin", ".ogg", ".mp3", ".wav",
+    ".lock", ".lockfile", ".map", ".min.js", ".min.css", ".mcmeta",
 }
 
 IGNORED_DIFF_PATTERNS = [
@@ -15,6 +15,13 @@ IGNORED_DIFF_PATTERNS = [
     r"yarn\.lock$",
     r"pnpm-lock\.yaml$",
     r"assets/[^/]+/lang/[^/]+\.json$",
+    r"assets/[^/]+/animations/.*\.json$",
+    r"assets/[^/]+/geo/.*\.json$",
+    r"assets/[^/]+/models/.*\.json$",
+    r"assets/[^/]+/textures/",
+    r"assets/[^/]+/sounds/",
+    r"assets/[^/]+/shaders/",
+    r"src/generated/",
 ]
 
 
@@ -248,4 +255,55 @@ def filter_diff_for_review(diff_text: str) -> str:
         filtered_chunks.append("\n".join(current_chunk))
 
     return "\n".join(filtered_chunks)
+
+
+def split_diff_into_batches(
+    diff_text: str,
+    max_files_per_batch: int = 15,
+    max_chars_per_batch: int = 100_000
+) -> List[str]:
+    """
+    Splits a filtered unified diff into manageable batches of files to prevent
+    exceeding API token quotas (TPM), request size limits, or attention degradation on massive PRs.
+    """
+    if not diff_text or not diff_text.strip():
+        return []
+
+    file_diffs: List[str] = []
+    current_lines: List[str] = []
+
+    for line in diff_text.splitlines(keepends=True):
+        if line.startswith("diff --git "):
+            if current_lines:
+                file_diffs.append("".join(current_lines))
+            current_lines = [line]
+        else:
+            if current_lines is not None:
+                current_lines.append(line)
+
+    if current_lines:
+        file_diffs.append("".join(current_lines))
+
+    if not file_diffs:
+        return [diff_text]
+
+    batches: List[str] = []
+    current_batch: List[str] = []
+    current_chars = 0
+
+    for fd in file_diffs:
+        fd_len = len(fd)
+        if current_batch and (len(current_batch) >= max_files_per_batch or (current_chars + fd_len > max_chars_per_batch)):
+            batches.append("".join(current_batch))
+            current_batch = [fd]
+            current_chars = fd_len
+        else:
+            current_batch.append(fd)
+            current_chars += fd_len
+
+    if current_batch:
+        batches.append("".join(current_batch))
+
+    return batches
+
 

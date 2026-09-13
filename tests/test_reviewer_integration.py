@@ -722,9 +722,68 @@ index 1111111..2222222 100644
         self.assertNotIn("```suggestion", validated[0]["body"])
         self.assertIn("```java", validated[0]["body"])
 
+    @patch("src.reviewer.time.sleep")
+    @patch("src.reviewer.requests.get")
+    def test_review_pr_multi_batch(self, mock_requests_get, mock_sleep):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = (
+            "diff --git a/src/File1.java b/src/File1.java\n"
+            "--- a/src/File1.java\n"
+            "+++ b/src/File1.java\n"
+            "@@ -1,2 +1,3 @@\n"
+            " public class File1 {\n"
+            "+    int a = 1;\n"
+            " }\n"
+            "diff --git a/src/File2.java b/src/File2.java\n"
+            "--- a/src/File2.java\n"
+            "+++ b/src/File2.java\n"
+            "@@ -1,2 +1,3 @@\n"
+            " public class File2 {\n"
+            "+    int b = 2;\n"
+            " }\n"
+        )
+        mock_requests_get.return_value = mock_resp
+
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto"
+        )
+
+        with patch("src.reviewer.split_diff_into_batches") as mock_split, \
+             patch("src.reviewer.genai.Client") as mock_client_cls, \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash"]):
+            mock_split.return_value = [
+                "diff --git a/src/File1.java b/src/File1.java\n--- a/src/File1.java\n+++ b/src/File1.java\n@@ -1,2 +1,3 @@\n public class File1 {\n+    int a = 1;\n }\n",
+                "diff --git a/src/File2.java b/src/File2.java\n--- a/src/File2.java\n+++ b/src/File2.java\n@@ -1,2 +1,3 @@\n public class File2 {\n+    int b = 2;\n }\n"
+            ]
+
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            resp1 = MagicMock()
+            resp1.text = json.dumps([{"path": "src/File1.java", "line": 2, "body": "Issue in File1", "severity": "WARNING"}])
+            resp2 = MagicMock()
+            resp2.text = json.dumps([{"path": "src/File2.java", "line": 2, "body": "Critical issue in File2", "severity": "CRITICAL"}])
+            mock_client.models.generate_content.side_effect = [resp1, resp2]
+
+            reviewer = TommiReviewer(config)
+            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+
+            self.assertEqual(len(comments), 2)
+            # CRITICAL from File2 should be prioritized first
+            self.assertEqual(comments[0]["path"], "src/File2.java")
+            self.assertEqual(comments[0]["severity"], "CRITICAL")
+            self.assertEqual(comments[1]["path"], "src/File1.java")
+            self.assertEqual(comments[1]["severity"], "WARNING")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 
 
 

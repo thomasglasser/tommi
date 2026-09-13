@@ -94,6 +94,49 @@ class TestDiffParser(unittest.TestCase):
         # Line 50 is far away -> should return None
         self.assertIsNone(parsed.get_closest_valid_line(path, 50, max_distance=3))
 
+    def test_ignored_patterns_and_extensions(self):
+        from src.diff_parser import is_reviewable_file
+        # Generated code
+        self.assertFalse(is_reviewable_file("src/generated/resources/data/tags.json"))
+        # Asset models, animations, geo, textures, sounds, shaders
+        self.assertFalse(is_reviewable_file("assets/mod/animations/entity.animation.json"))
+        self.assertFalse(is_reviewable_file("assets/mod/geo/entity.geo.json"))
+        self.assertFalse(is_reviewable_file("assets/mod/models/item/wand.json"))
+        self.assertFalse(is_reviewable_file("assets/mod/sounds/sound.ogg"))
+        self.assertFalse(is_reviewable_file("assets/mod/textures/block.png.mcmeta"))
+        # Valid code and data
+        self.assertTrue(is_reviewable_file("src/main/java/com/example/Foo.java"))
+        self.assertTrue(is_reviewable_file("src/main/resources/data/mineraculous/recipes/foo.json"))
+
+    def test_split_diff_into_batches(self):
+        from src.diff_parser import split_diff_into_batches
+
+        # Empty diff
+        self.assertEqual(split_diff_into_batches(""), [])
+        self.assertEqual(split_diff_into_batches("   "), [])
+
+        # Single file diff
+        batches = split_diff_into_batches(SAMPLE_DIFF, max_files_per_batch=5)
+        self.assertEqual(len(batches), 1)
+        self.assertIn("MyClass.java", batches[0])
+
+        # Multi-file diff exceeding max_files_per_batch
+        multi_diff = (
+            "diff --git a/File1.java b/File1.java\n+1\n"
+            "diff --git a/File2.java b/File2.java\n+2\n"
+            "diff --git a/File3.java b/File3.java\n+3\n"
+        )
+        batches_files = split_diff_into_batches(multi_diff, max_files_per_batch=2)
+        self.assertEqual(len(batches_files), 2)
+        self.assertIn("File1.java", batches_files[0])
+        self.assertIn("File2.java", batches_files[0])
+        self.assertIn("File3.java", batches_files[1])
+
+        # Multi-file diff exceeding max_chars_per_batch
+        batches_chars = split_diff_into_batches(multi_diff, max_files_per_batch=10, max_chars_per_batch=40)
+        self.assertGreater(len(batches_chars), 1)
+
 
 if __name__ == "__main__":
     unittest.main()
+
