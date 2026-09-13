@@ -669,7 +669,7 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
             # 2. Strict line-in-diff validation
             is_valid_line = parsed_diff.is_line_in_diff(path, line)
             if not is_valid_line:
-                closest = parsed_diff.get_closest_valid_line(path, line, max_distance=3)
+                closest = parsed_diff.get_closest_valid_line(path, line, max_distance=30)
                 if closest is not None:
                     line = closest
                     is_valid_line = True
@@ -689,6 +689,7 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
                 "line": line,
                 "body": body,
                 "severity": severity,
+                "is_valid_line": is_valid_line,
             })
 
         # Stable sort by severity: CRITICAL -> WARNING -> SUGGESTION

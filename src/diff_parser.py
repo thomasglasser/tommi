@@ -64,7 +64,7 @@ class ParsedDiff:
         """Returns True if the line number exists in the right side of the diff for this file."""
         return file_path in self.files and line_number in self.files[file_path]
 
-    def get_closest_valid_line(self, file_path: str, target_line: int, max_distance: int = 3) -> Optional[int]:
+    def get_closest_valid_line(self, file_path: str, target_line: int, max_distance: int = 30) -> Optional[int]:
         """Finds the closest valid line in the file diff if within max_distance lines."""
         if file_path not in self.files or not self.files[file_path]:
             return None

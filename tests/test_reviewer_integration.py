@@ -721,6 +721,7 @@ index 1111111..2222222 100644
         # Suggestion block must be converted to java code block to prevent corrupting unrelated line
         self.assertNotIn("```suggestion", validated[0]["body"])
         self.assertIn("```java", validated[0]["body"])
+        self.assertFalse(validated[0]["is_valid_line"])
 
     @patch("src.reviewer.time.sleep")
     @patch("src.reviewer.requests.get")
