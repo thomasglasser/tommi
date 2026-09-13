@@ -76,16 +76,6 @@ def main():
 
     pr = commenter.pr
 
-    # Synchronize workspace to PR head commit if inside a git repository
-    if hasattr(pr, "head") and pr.head and hasattr(pr.head, "sha") and isinstance(pr.head.sha, str) and pr.head.sha:
-        try:
-            import subprocess
-            subprocess.run(["git", "fetch", "--depth=1", "origin", pr.head.sha], check=True, capture_output=True, timeout=30)
-            subprocess.run(["git", "checkout", "--detach", pr.head.sha], check=True, capture_output=True, timeout=15)
-            logger.info(f"Synchronized workspace to PR #{config.pr_number} head ({pr.head.sha[:8]}).")
-        except Exception as git_err:
-            logger.debug(f"Workspace PR head sync skipped/failed: {git_err}")
-
     if config.comment_id and not (config.event_name == "pull_request" and config.is_merged):
         try:
             target_comment = pr.get_issue_comment(config.comment_id) if config.event_name == "issue_comment" else pr.get_comment(config.comment_id)
@@ -107,8 +97,18 @@ def main():
         logger.info("Comment or review body does not invoke a /tommi slash command. Nothing to do.")
         return
 
-    # 1. Acknowledge the request with 👀 reaction
+    # 1. Acknowledge the request immediately with 👀 reaction so the user knows work has begun
     commenter.add_reaction("eyes")
+
+    # Synchronize workspace to PR head commit if inside a git repository
+    if hasattr(pr, "head") and pr.head and hasattr(pr.head, "sha") and isinstance(pr.head.sha, str) and pr.head.sha:
+        try:
+            import subprocess
+            subprocess.run(["git", "fetch", "--depth=1", "origin", pr.head.sha], check=True, capture_output=True, timeout=30)
+            subprocess.run(["git", "checkout", "--detach", pr.head.sha], check=True, capture_output=True, timeout=15)
+            logger.info(f"Synchronized workspace to PR #{config.pr_number} head ({pr.head.sha[:8]}).")
+        except Exception as git_err:
+            logger.debug(f"Workspace PR head sync skipped/failed: {git_err}")
 
     # 2. Determine action based on event and command
     try:

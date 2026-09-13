@@ -3,10 +3,17 @@ import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set
 
-IGNORED_DIFF_EXTENSIONS = {
-    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg", ".webp",
-    ".jar", ".zip", ".gz", ".tar", ".bin", ".ogg", ".mp3", ".wav",
-    ".lock", ".lockfile", ".map", ".min.js", ".min.css", ".mcmeta",
+REVIEWABLE_CODE_EXTENSIONS = {
+    # JVM
+    ".java", ".kt", ".kts", ".scala", ".groovy",
+    # Python
+    ".py", ".pyi",
+    # Web & TypeScript / JavaScript
+    ".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx",
+    # Systems / Native
+    ".rs", ".go", ".c", ".cpp", ".cc", ".cxx", ".h", ".hpp", ".cs", ".swift",
+    # Shell & Scripting
+    ".rb", ".php", ".sh", ".bash", ".zsh",
 }
 
 IGNORED_DIFF_PATTERNS = [
@@ -14,22 +21,24 @@ IGNORED_DIFF_PATTERNS = [
     r"package-lock\.json$",
     r"yarn\.lock$",
     r"pnpm-lock\.yaml$",
-    r"assets/[^/]+/lang/[^/]+\.json$",
-    r"assets/[^/]+/animations/.*\.json$",
-    r"assets/[^/]+/geo/.*\.json$",
-    r"assets/[^/]+/models/.*\.json$",
-    r"assets/[^/]+/textures/",
-    r"assets/[^/]+/sounds/",
-    r"assets/[^/]+/shaders/",
-    r"src/generated/",
+    r"(?:^|/)resources/",
+    r"(?:^|/)assets/",
+    r"(?:^|/)META-INF/",
+    r"(?:^|/)src/generated/",
+    r"(?:^|/)dist/",
+    r"(?:^|/)build/",
+    r"(?:^|/)out/",
+    r"(?:^|/)\.gradle/",
 ]
 
 
 def is_reviewable_file(file_path: str) -> bool:
-    """Returns True if the file should be reviewed by AI."""
+    """
+    Returns True if the file is an actual source code file and not a resource, asset, or metadata file.
+    """
     clean_path = file_path.replace("\\", "/").strip()
     ext = os.path.splitext(clean_path)[1].lower()
-    if ext in IGNORED_DIFF_EXTENSIONS:
+    if ext not in REVIEWABLE_CODE_EXTENSIONS:
         return False
     for pat in IGNORED_DIFF_PATTERNS:
         if re.search(pat, clean_path, re.IGNORECASE):

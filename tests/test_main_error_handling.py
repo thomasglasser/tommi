@@ -294,6 +294,36 @@ class TestMainErrorHandling(unittest.TestCase):
         self.assertIn("Connection Error", mock_commenter.reply_to_comment.call_args[0][0])
         mock_commenter.add_reaction.assert_any_call("confused")
 
+    @patch("src.main.GitHubCommenter")
+    @patch("src.main.GitHubAuthManager")
+    @patch("src.main.TommiConfig.from_env")
+    @patch("src.main.TommiReviewer")
+    def test_main_sends_eyes_reaction_first(self, mock_reviewer_cls, mock_from_env, mock_auth_cls, mock_commenter_cls):
+        mock_config = MagicMock()
+        mock_config.event_name = "issue_comment"
+        mock_config.is_merged = False
+        mock_config.comment_body = "/tommi review"
+        mock_config.github_repository = "test/repo"
+        mock_config.pr_number = 1
+        mock_config.comment_id = 123
+        mock_from_env.return_value = mock_config
+
+        call_order = []
+        mock_commenter = MagicMock()
+        mock_commenter.add_reaction.side_effect = lambda r: call_order.append(f"reaction:{r}")
+        mock_commenter_cls.return_value = mock_commenter
+
+        mock_reviewer = MagicMock()
+        mock_reviewer.review_pr.side_effect = lambda **kw: call_order.append("review_pr") or []
+        mock_reviewer_cls.return_value = mock_reviewer
+
+        main()
+
+        # "eyes" reaction must be sent BEFORE review_pr is executed
+        self.assertIn("reaction:eyes", call_order)
+        self.assertIn("review_pr", call_order)
+        self.assertLess(call_order.index("reaction:eyes"), call_order.index("review_pr"))
+
 
 if __name__ == "__main__":
     unittest.main()

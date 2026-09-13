@@ -34,12 +34,19 @@ class TestDiffParser(unittest.TestCase):
         self.assertTrue(parsed.is_line_in_diff(path, 14))
     def test_is_reviewable_file(self):
         from src.diff_parser import is_reviewable_file
+        # Code files across languages
         self.assertTrue(is_reviewable_file("src/main/java/MyClass.java"))
-        self.assertTrue(is_reviewable_file("src/main/resources/data/mod/recipes/craft.json"))
+        self.assertTrue(is_reviewable_file("src/reviewer.py"))
+        self.assertTrue(is_reviewable_file("src/index.ts"))
+        self.assertTrue(is_reviewable_file("src/lib.rs"))
+        # Resources, data, and asset files (must NOT be reviewed)
+        self.assertFalse(is_reviewable_file("src/main/resources/data/mod/recipes/craft.json"))
+        self.assertFalse(is_reviewable_file("src/main/resources/META-INF/accesstransformer.cfg"))
         self.assertFalse(is_reviewable_file("gradle.lockfile"))
         self.assertFalse(is_reviewable_file("package-lock.json"))
         self.assertFalse(is_reviewable_file("assets/mod/lang/en_us.json"))
         self.assertFalse(is_reviewable_file("assets/mod/textures/item/tool.png"))
+        self.assertFalse(is_reviewable_file("README.md"))
 
     def test_filter_diff_for_review(self):
         from src.diff_parser import filter_diff_for_review
@@ -104,9 +111,10 @@ class TestDiffParser(unittest.TestCase):
         self.assertFalse(is_reviewable_file("assets/mod/models/item/wand.json"))
         self.assertFalse(is_reviewable_file("assets/mod/sounds/sound.ogg"))
         self.assertFalse(is_reviewable_file("assets/mod/textures/block.png.mcmeta"))
-        # Valid code and data
+        # Valid code
         self.assertTrue(is_reviewable_file("src/main/java/com/example/Foo.java"))
-        self.assertTrue(is_reviewable_file("src/main/resources/data/mineraculous/recipes/foo.json"))
+        # Resources must not be reviewed
+        self.assertFalse(is_reviewable_file("src/main/resources/data/mineraculous/recipes/foo.json"))
 
     def test_split_diff_into_batches(self):
         from src.diff_parser import split_diff_into_batches

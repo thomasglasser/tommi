@@ -457,7 +457,7 @@ class TommiReviewer:
 
                         if is_503 or is_429:
                             if attempt < max_attempts - 1:
-                                backoff_sec = (attempt + 1) * 15
+                                backoff_sec = 5
                                 logger.warning(
                                     f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
                                     f"Backing off for {backoff_sec}s before retrying..."
@@ -470,7 +470,7 @@ class TommiReviewer:
                         else:
                             logger.warning(f"Generation or JSON parsing failed with model '{model_name}': {e}")
                             if attempt < max_attempts - 1:
-                                time.sleep(2)
+                                time.sleep(1)
                                 continue
                             break
 
@@ -478,7 +478,7 @@ class TommiReviewer:
                     break
                 elif i < len(models_to_try) - 1:
                     if encountered_429 or encountered_503:
-                        time.sleep(5)
+                        time.sleep(1)
                     logger.info(f"Failing over to next candidate model '{models_to_try[i + 1]}'...")
 
             if batch_comments is None:
@@ -493,7 +493,7 @@ class TommiReviewer:
             all_comments_data.extend(batch_comments)
 
             if b_idx < len(diff_batches) - 1:
-                time.sleep(2)
+                time.sleep(1)
 
         # Validate, adjust line numbers, and sort by severity priority
         validated_comments = self._validate_comments(all_comments_data, parsed_diff)

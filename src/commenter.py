@@ -17,25 +17,31 @@ class GitHubCommenter:
         self.pr: PullRequest = self.repo.get_pull(self.pr_number)
 
     def add_reaction(self, reaction: str) -> None:
-        """Adds a reaction to the triggering comment if comment_id is present."""
-        if not self.comment_id:
-            return
-        try:
-            # Check review comments first
-            comment = self.pr.get_comment(self.comment_id)
-            comment.create_reaction(reaction)
-            logger.info(f"Added reaction '{reaction}' to review comment #{self.comment_id}")
-            return
-        except Exception:
-            pass
+        """Adds a reaction to the triggering comment if comment_id is present, or to the PR issue description."""
+        if self.comment_id:
+            try:
+                # Check review comments first
+                comment = self.pr.get_comment(self.comment_id)
+                comment.create_reaction(reaction)
+                logger.info(f"Added reaction '{reaction}' to review comment #{self.comment_id}")
+                return
+            except Exception:
+                pass
 
-        try:
-            # Fallback to issue comment
-            comment = self.pr.as_issue().get_comment(self.comment_id)
-            comment.create_reaction(reaction)
-            logger.info(f"Added reaction '{reaction}' to issue comment #{self.comment_id}")
-        except Exception as e:
-            logger.warning(f"Failed to add reaction '{reaction}': {e}")
+            try:
+                # Fallback to issue comment
+                comment = self.pr.as_issue().get_comment(self.comment_id)
+                comment.create_reaction(reaction)
+                logger.info(f"Added reaction '{reaction}' to issue comment #{self.comment_id}")
+                return
+            except Exception as e:
+                logger.warning(f"Failed to add reaction '{reaction}': {e}")
+        else:
+            try:
+                self.pr.as_issue().create_reaction(reaction)
+                logger.info(f"Added reaction '{reaction}' to PR #{self.pr_number}")
+            except Exception as e:
+                logger.warning(f"Failed to add reaction '{reaction}' to PR #{self.pr_number}: {e}")
 
     def get_latest_commit(self) -> Commit:
         """Retrieves the latest commit in the pull request."""
