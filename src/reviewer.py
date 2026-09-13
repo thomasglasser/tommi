@@ -692,12 +692,14 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
             raw_sev = str(item.get("severity", "WARNING")).strip().upper()
             severity = raw_sev if raw_sev in severity_rank else "WARNING"
 
-            if not path or not line or not body:
+            if not path or line is None or not body:
                 continue
 
-            # Ensure line number is an int
+            # Ensure line number is a positive int
             try:
                 line = int(line)
+                if line <= 0:
+                    continue
             except (ValueError, TypeError):
                 continue
 

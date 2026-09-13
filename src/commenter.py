@@ -94,7 +94,14 @@ class GitHubCommenter:
             severity = item.get("severity", "WARNING")
             is_valid_line = item.get("is_valid_line", True)
 
-            if not path or not line or not body:
+            if not path or line is None or not body:
+                continue
+
+            try:
+                line_int = int(line)
+                if line_int <= 0:
+                    continue
+            except (ValueError, TypeError):
                 continue
 
             severity_prefix = f"**[{severity}]** "
@@ -103,7 +110,7 @@ class GitHubCommenter:
             if is_valid_line:
                 batch_comments.append({
                     "path": path,
-                    "line": int(line),
+                    "line": line_int,
                     "body": formatted_body,
                     "side": "RIGHT"
                 })

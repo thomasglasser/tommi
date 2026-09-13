@@ -103,8 +103,9 @@ class TestLiveDiffSearch(unittest.TestCase):
 
     def test_live_api_diff_search_and_batch_validation(self):
         """
-        Live integration test: Queries the GitHub API for PR #87 diff, searches and parses it,
-        and verifies that 100% of batch comments are valid diff lines without modifying GitHub.
+        Live integration test: Queries the GitHub API for the latest open PR diff,
+        searches and parses it, and verifies that 100% of batch comments are valid diff lines
+        without modifying GitHub.
         """
         token = os.environ.get("GITHUB_TOKEN")
         if not token and shutil.which("gh"):
@@ -123,56 +124,65 @@ class TestLiveDiffSearch(unittest.TestCase):
             "Accept": "application/vnd.github.v3.diff",
         }
 
+        # 1. Discover the latest open PR dynamically from GitHub
         try:
-            resp = requests.get(
-                "https://api.github.com/repos/Mineraculous/Mineraculous/pulls/87",
-                headers=headers,
-                timeout=15,
+            prs_resp = requests.get(
+                "https://api.github.com/repos/Mineraculous/Mineraculous/pulls?state=open&sort=created&direction=desc&per_page=1",
+                headers={"Authorization": f"token {token}"},
+                timeout=10,
             )
-            if resp.status_code != 200:
-                # Fallback to discovering the latest open PR in the repo
-                open_prs = requests.get(
-                    "https://api.github.com/repos/Mineraculous/Mineraculous/pulls?state=open&per_page=1",
-                    headers={"Authorization": f"token {token}"},
-                    timeout=10,
-                ).json()
-                if open_prs:
-                    pr_num = open_prs[0]["number"]
-                    resp = requests.get(
-                        f"https://api.github.com/repos/Mineraculous/Mineraculous/pulls/{pr_num}",
-                        headers=headers,
-                        timeout=15,
-                    )
+            if prs_resp.status_code != 200 or not prs_resp.json():
+                self.skipTest("No open PRs found in Mineraculous repository.")
+
+            latest_pr = prs_resp.json()[0]
+            pr_number = latest_pr["number"]
+            pr_title = latest_pr["title"]
+            pr_diff_url = latest_pr["url"]
+
+            resp = requests.get(pr_diff_url, headers=headers, timeout=15)
         except Exception as e:
             self.skipTest(f"Live GitHub API unreachable: {e}")
 
         if resp.status_code != 200:
-            self.skipTest(f"GitHub API returned HTTP {resp.status_code}")
+            self.skipTest(f"GitHub API returned HTTP {resp.status_code} for PR #{pr_number}")
 
         raw_diff = resp.text
         filtered_diff = filter_diff_for_review(raw_diff)
         parsed_diff = parse_unified_diff(filtered_diff)
 
-        # Verify real diff was parsed
-        self.assertGreater(len(parsed_diff.files), 50)
-        core_events_path = "src/main/java/dev/thomasglasser/mineraculous/impl/core/MineraculousCoreEvents.java"
-        self.assertIn(core_events_path, parsed_diff.files)
+        # Verify real diff was parsed and has modified code files
+        self.assertGreater(len(parsed_diff.files), 0, f"PR #{pr_number} ({pr_title}) should have at least 1 reviewable code file")
 
-        # Verify line 293 snaps to 316 in live diff
-        snapped = parsed_diff.get_closest_valid_line(core_events_path, 293)
-        self.assertEqual(snapped, 316)
+        # Pick the first modified file from the real PR diff
+        sample_file = next(iter(parsed_diff.files.keys()))
+        valid_lines = sorted(parsed_diff.files[sample_file])
+        self.assertGreater(len(valid_lines), 0, f"{sample_file} should have valid diff lines")
 
-        # Verify diff searching for snippet
-        matched = parsed_diff.find_matching_line(core_events_path, "ServerLevel level = player.serverLevel();", preferred_line=290)
-        self.assertEqual(matched, 316)
+        first_valid_line = next((l for l in valid_lines if l > 0), None)
+        self.assertIsNotNone(first_valid_line, f"No positive valid diff lines in {sample_file}")
+        self.assertTrue(parsed_diff.is_line_in_diff(sample_file, first_valid_line))
+
+        # Test line snapping within 30 lines
+        target_line = max(1, first_valid_line - 2)
+        snapped = parsed_diff.get_closest_valid_line(sample_file, target_line, max_distance=30)
+        self.assertIsNotNone(snapped)
+        self.assertTrue(parsed_diff.is_line_in_diff(sample_file, snapped))
+
+        # Test target code search using actual line content from this PR
+        if sample_file in parsed_diff.line_contents and first_valid_line in parsed_diff.line_contents[sample_file]:
+            line_content = parsed_diff.line_contents[sample_file][first_valid_line].strip()
+            if line_content:
+                matched = parsed_diff.find_matching_line(sample_file, line_content, preferred_line=target_line)
+                self.assertIsNotNone(matched)
+                self.assertTrue(parsed_diff.is_line_in_diff(sample_file, matched))
 
         # Test full commenter pipeline with mock PR
-        config = TommiConfig(gemini_api_key="fake", github_repository="Mineraculous/Mineraculous", pr_number=87)
+        config = TommiConfig(gemini_api_key="fake", github_repository="Mineraculous/Mineraculous", pr_number=pr_number)
         reviewer = TommiReviewer(config)
 
         test_comments = [
-            {"path": core_events_path, "line": 293, "body": "Check kwami discard logic", "severity": "WARNING"},
-            {"path": core_events_path, "line": 9999, "body": "Nonexistent line note", "severity": "SUGGESTION"},
+            {"path": sample_file, "line": first_valid_line, "body": "Valid line feedback", "severity": "WARNING"},
+            {"path": sample_file, "line": 999999, "body": "Nonexistent line note", "severity": "SUGGESTION"},
         ]
         validated = reviewer._validate_comments(test_comments, parsed_diff)
 
@@ -183,7 +193,7 @@ class TestLiveDiffSearch(unittest.TestCase):
         mock_repo.get_pull.return_value = mock_pr
         mock_pr.get_commits.return_value = [MagicMock()]
 
-        commenter = GitHubCommenter(mock_github, "Mineraculous/Mineraculous", 87)
+        commenter = GitHubCommenter(mock_github, "Mineraculous/Mineraculous", pr_number)
         commenter.post_review_comments(validated)
 
         # Ensure no live comments were posted

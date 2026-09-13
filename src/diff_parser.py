@@ -152,9 +152,11 @@ def parse_unified_diff(diff_text: str, filter_non_code: bool = True) -> ParsedDi
     current_new_line = 0
 
     hunk_header_re = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+    in_hunk = False
 
     for line in diff_text.splitlines():
         if line.startswith("diff --git "):
+            in_hunk = False
             parts = line.split(" ")
             if len(parts) >= 4:
                 b_path = parts[3]
@@ -174,18 +176,28 @@ def parse_unified_diff(diff_text: str, filter_non_code: bool = True) -> ParsedDi
         if current_file is None or not is_current_file_reviewable:
             continue
 
+        if line.startswith("--- ") or line.startswith("+++ "):
+            in_hunk = False
+            continue
+
         hunk_match = hunk_header_re.match(line)
         if hunk_match:
             current_new_line = int(hunk_match.group(1))
+            in_hunk = True
+            continue
+
+        if not in_hunk:
             continue
 
         if line.startswith("+"):
-            files[current_file].add(current_new_line)
-            line_contents[current_file][current_new_line] = line[1:]
+            if current_new_line > 0:
+                files[current_file].add(current_new_line)
+                line_contents[current_file][current_new_line] = line[1:]
             current_new_line += 1
         elif line.startswith(" "):
-            files[current_file].add(current_new_line)
-            line_contents[current_file][current_new_line] = line[1:]
+            if current_new_line > 0:
+                files[current_file].add(current_new_line)
+                line_contents[current_file][current_new_line] = line[1:]
             current_new_line += 1
         elif line.startswith("-"):
             pass
