@@ -219,6 +219,11 @@ class TommiReviewer:
                 max_output_tokens=65536,
                 automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
             )
+            if getattr(self.config, "thinking_budget", 0) > 0:
+                gen_config.thinking_config = types.ThinkingConfig(
+                    thinking_budget=self.config.thinking_budget
+                )
+
             if tools_list:
                 gen_config.tools = tools_list
             else:
@@ -234,7 +239,20 @@ class TommiReviewer:
             except Exception as gen_err:
                 response = None
                 err_str = str(gen_err).lower()
-                if gen_config.response_schema and ("schema" in err_str or "unsupported" in err_str):
+                if getattr(gen_config, "thinking_config", None) and ("thinking" in err_str or "thought" in err_str):
+                    logger.info(f"Model '{model_name}' does not support thinking_config. Retrying without thinking_config...")
+                    gen_config.thinking_config = None
+                    try:
+                        response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=gen_config,
+                        )
+                    except Exception as thinking_retry_err:
+                        gen_err = thinking_retry_err
+                        err_str = str(gen_err).lower()
+
+                if response is None and gen_config.response_schema and ("schema" in err_str or "unsupported" in err_str):
                     logger.info(f"Model '{model_name}' does not support response_schema. Retrying without response_schema...")
                     gen_config.response_schema = None
                     try:
@@ -321,6 +339,10 @@ class TommiReviewer:
             response_schema=list[ReviewCommentItem],
             automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         )
+        if getattr(self.config, "thinking_budget", 0) > 0:
+            final_config.thinking_config = types.ThinkingConfig(
+                thinking_budget=self.config.thinking_budget
+            )
 
         try:
             final_response = self.client.models.generate_content(
@@ -331,7 +353,20 @@ class TommiReviewer:
         except Exception as gen_err:
             final_response = None
             err_str = str(gen_err).lower()
-            if final_config.response_schema and ("schema" in err_str or "unsupported" in err_str):
+            if getattr(final_config, "thinking_config", None) and ("thinking" in err_str or "thought" in err_str):
+                logger.info(f"Model '{model_name}' does not support thinking_config on final turn. Retrying without thinking_config...")
+                final_config.thinking_config = None
+                try:
+                    final_response = self.client.models.generate_content(
+                        model=model_name,
+                        contents=contents,
+                        config=final_config,
+                    )
+                except Exception as final_thinking_retry_err:
+                    gen_err = final_thinking_retry_err
+                    err_str = str(gen_err).lower()
+
+            if final_response is None and final_config.response_schema and ("schema" in err_str or "unsupported" in err_str):
                 logger.info(f"Model '{model_name}' does not support response_schema on final turn. Retrying without response_schema...")
                 final_config.response_schema = None
                 try:

@@ -56,6 +56,28 @@ class TommiLearner:
 
         raise ValueError(f"Unable to parse JSON dictionary from: {text[:200]}...")
 
+    def _extract_response_text(self, response: Any) -> str:
+        """Extracts text from response, excluding thought parts and handling candidate structure."""
+        if not response:
+            return ""
+        candidate = response.candidates[0] if (hasattr(response, "candidates") and response.candidates) else None
+        if not candidate:
+            return response.text.strip() if hasattr(response, "text") and response.text else ""
+
+        content = getattr(candidate, "content", None)
+        parts = getattr(content, "parts", None) if content else None
+        if parts:
+            text_parts = []
+            for part in parts:
+                is_thought = bool(getattr(part, "thought", False))
+                p_text = getattr(part, "text", None)
+                if isinstance(p_text, str) and p_text and not is_thought:
+                    text_parts.append(p_text)
+            if text_parts:
+                return "".join(text_parts).strip()
+
+        return response.text.strip() if hasattr(response, "text") and response.text else ""
+
     def _generate_content_with_fallback(self, prompt: str) -> str:
         """Executes content generation, trying candidate models with backoff on 503/429 before failing."""
         candidate_models = resolve_candidate_models(self.client, self.config.model_name)
@@ -75,6 +97,10 @@ class TommiLearner:
                         max_output_tokens=65536,
                         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                     )
+                    if getattr(self.config, "thinking_budget", 0) > 0:
+                        gen_config.thinking_config = types.ThinkingConfig(
+                            thinking_budget=self.config.thinking_budget
+                        )
 
                     response = self.client.models.generate_content(
                         model=model_name,
@@ -85,6 +111,22 @@ class TommiLearner:
                 except Exception as e:
                     error_str = str(e).lower()
                     last_error = e
+
+                    if getattr(gen_config, "thinking_config", None) and ("thinking" in error_str or "unsupported" in error_str):
+                        logger.info(f"Learner model '{model_name}' does not support thinking_config. Retrying without thinking_config...")
+                        gen_config.thinking_config = None
+                        try:
+                            response = self.client.models.generate_content(
+                                model=model_name,
+                                contents=prompt,
+                                config=gen_config,
+                            )
+                            break
+                        except Exception as thinking_retry_err:
+                            e = thinking_retry_err
+                            error_str = str(e).lower()
+                            last_error = e
+
                     is_503 = "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str
                     is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str or "rate limit" in error_str or "too many requests" in error_str
 
@@ -125,7 +167,7 @@ class TommiLearner:
                 raise RuntimeError(f"Failed to generate AI learning response: {last_error}") from last_error
             raise RuntimeError("Failed to obtain response from Gemini API.")
 
-        return response.text
+        return self._extract_response_text(response)
 
     def learn_from_merged_pr(
         self,

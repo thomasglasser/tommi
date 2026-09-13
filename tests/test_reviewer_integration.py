@@ -368,8 +368,8 @@ Hope this helps! See [guidelines] {docs}."""
             gen_config = call_args.kwargs.get("config")
             self.assertIsNotNone(gen_config)
             self.assertEqual(gen_config.response_mime_type, "application/json")
-            self.assertIsNotNone(gen_config.response_schema)
-            self.assertIsNone(getattr(gen_config, "thinking_config", None))
+            self.assertIsNotNone(getattr(gen_config, "thinking_config", None))
+            self.assertEqual(gen_config.thinking_config.thinking_budget, 2048)
 
     @patch("src.reviewer.requests.get")
     @patch("src.reviewer.time.sleep")
@@ -755,6 +755,77 @@ index 1111111..2222222 100644
             self.assertEqual(comments[0]["severity"], "CRITICAL")
             self.assertEqual(comments[1]["path"], "src/File1.java")
             self.assertEqual(comments[1]["severity"], "WARNING")
+
+    @patch("src.reviewer.requests.get")
+    def test_thinking_budget_passed_to_generate_content(self, mock_requests_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "diff --git a/src/Test.java b/src/Test.java\n--- a/src/Test.java\n+++ b/src/Test.java\n@@ -1,1 +1,2 @@\n+ int x = 1;\n"
+        mock_requests_get.return_value = mock_resp
+
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto",
+            thinking_budget=2048,
+        )
+
+        with patch("src.reviewer.genai.Client") as mock_client_cls, \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash"]):
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            mock_gen_response = MagicMock()
+            mock_gen_response.text = '[]'
+            mock_client.models.generate_content.return_value = mock_gen_response
+
+            reviewer = TommiReviewer(config)
+            reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+
+            self.assertTrue(mock_client.models.generate_content.called)
+            called_config = mock_client.models.generate_content.call_args[1]["config"]
+            self.assertIsNotNone(called_config.thinking_config)
+            self.assertEqual(called_config.thinking_config.thinking_budget, 2048)
+
+    @patch("src.reviewer.requests.get")
+    def test_thinking_unsupported_fallback(self, mock_requests_get):
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "diff --git a/src/Test.java b/src/Test.java\n--- a/src/Test.java\n+++ b/src/Test.java\n@@ -1,1 +1,2 @@\n+ int x = 1;\n"
+        mock_requests_get.return_value = mock_resp
+
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto",
+            thinking_budget=2048,
+        )
+
+        with patch("src.reviewer.genai.Client") as mock_client_cls, \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.7-flash"]):
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            mock_gen_response = MagicMock()
+            mock_gen_response.text = '[]'
+            # First call fails because model doesn't support thinking_config
+            mock_client.models.generate_content.side_effect = [
+                Exception("400 Bad Request: thinking_config is unsupported for this model."),
+                mock_gen_response,
+            ]
+
+            reviewer = TommiReviewer(config)
+            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+
+            self.assertEqual(comments, [])
+            self.assertEqual(mock_client.models.generate_content.call_count, 2)
+            # Second call should have retried with thinking_config=None
+            retry_config = mock_client.models.generate_content.call_args_list[1][1]["config"]
+            self.assertIsNone(retry_config.thinking_config)
 
 
 if __name__ == "__main__":

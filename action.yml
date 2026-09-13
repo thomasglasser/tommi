@@ -30,6 +30,10 @@ inputs:
     description: 'Repository name where central TOMMI rules are hosted'
     required: false
     default: 'thomasglasser/tommi'
+  thinking-budget:
+    description: 'Thinking budget in tokens for Gemini reasoning (default: 2048; set to 0 to disable)'
+    required: false
+    default: '2048'
 
 runs:
   using: 'composite'
@@ -53,6 +57,7 @@ runs:
         GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
         MODEL_NAME: ${{ inputs.model }}
         TOMMI_REPO: ${{ inputs.tommi-repo }}
+        THINKING_BUDGET: ${{ inputs.thinking-budget }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
         COMMENT_ID: ${{ github.event.comment.id }}
