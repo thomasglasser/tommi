@@ -11,6 +11,8 @@
 
 ## 2. Registry & Data Management
 
+* **Access Transformers vs. Copying Constants**: When extending or copying vanilla screens, entities, or other vanilla logic, ALWAYS prioritize using Access Transformers (`accesstransformer.cfg`) to expose vanilla fields, methods, or constants rather than copying/duplicating their values into local constants.
+
 * **Reversion & Undo Collection Snapshots**: Do NOT flag getter methods or calls returning collection snapshots (e.g., `ImmutableList` snapshots from `getAllEntries()`) as redundant or inefficient allocations outside hot tick loops; snapshots are required to prevent `ConcurrentModificationException` when entries are mutated during iteration.
 
 * **Reversion & Undo Scans**: Do NOT suggest early loop termination (`break` or `return`) or flag duplicate processing when iterating over reversion entries, undo queues, or history logs for a given entity or target; multiple entries can legitimately apply to the same entity (such as chained conversions or re-reversions) and must be processed.
