@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch, MagicMock
 from google.genai import types
 from src.config import TommiConfig
-from src.reviewer import TommiReviewer, HighDemandException, QuotaExceededException
+from src.reviewer import TommiReviewer, HighDemandException, QuotaExceededException, extract_retry_delay
 
 class TestReviewerIntegration(unittest.TestCase):
     @patch("src.reviewer.requests.get")
@@ -826,6 +826,130 @@ index 1111111..2222222 100644
             # Second call should have retried with thinking_config=None
             retry_config = mock_client.models.generate_content.call_args_list[1][1]["config"]
             self.assertIsNone(retry_config.thinking_config)
+
+    def test_extract_retry_delay(self):
+        # 1. From dictionary details
+        class MockErrorWithDetails(Exception):
+            def __init__(self):
+                self.details = [{"@type": "RetryInfo", "retryDelay": "33s"}]
+
+        self.assertEqual(extract_retry_delay(MockErrorWithDetails()), 33.0)
+
+        # 2. From string representation with retryDelay
+        err_str = "429 RESOURCE_EXHAUSTED. {'details': [{'retryDelay': '42.5s'}]}"
+        self.assertEqual(extract_retry_delay(Exception(err_str)), 42.5)
+
+        # 3. From string representation with 'Please retry in X s'
+        err_str2 = "Resource has been exhausted. Please retry in 15.2s"
+        self.assertEqual(extract_retry_delay(Exception(err_str2)), 15.2)
+
+        # 4. None when no retry delay present
+        self.assertIsNone(extract_retry_delay(Exception("Generic 500 internal error")))
+
+    @patch("src.reviewer.time.sleep")
+    @patch("src.reviewer.requests.get")
+    def test_review_pr_multi_batch_partial_preservation_on_quota_failure(self, mock_requests_get, mock_sleep):
+        """
+        Critical test: Verifies that if batch 1 succeeds with comments and batch 2 fails with 429 quota exhaustion,
+        the successful comments from batch 1 are NOT discarded, QuotaExceededException is NOT raised,
+        and unreviewed files are tracked.
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = (
+            "diff --git a/src/File1.java b/src/File1.java\n"
+            "--- a/src/File1.java\n"
+            "+++ b/src/File1.java\n"
+            "@@ -1,2 +1,3 @@\n"
+            " public class File1 {\n"
+            "+    int a = 1;\n"
+            " }\n"
+            "diff --git a/src/File2.java b/src/File2.java\n"
+            "--- a/src/File2.java\n"
+            "+++ b/src/File2.java\n"
+            "@@ -1,2 +1,3 @@\n"
+            " public class File2 {\n"
+            "+    int b = 2;\n"
+            " }\n"
+        )
+        mock_requests_get.return_value = mock_resp
+
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto"
+        )
+
+        with patch("src.reviewer.split_diff_into_batches") as mock_split, \
+             patch("src.reviewer.genai.Client") as mock_client_cls, \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.8-flash"]):
+            mock_split.return_value = [
+                "diff --git a/src/File1.java b/src/File1.java\n--- a/src/File1.java\n+++ b/src/File1.java\n@@ -1,2 +1,3 @@\n public class File1 {\n+    int a = 1;\n }\n",
+                "diff --git a/src/File2.java b/src/File2.java\n--- a/src/File2.java\n+++ b/src/File2.java\n@@ -1,2 +1,3 @@\n public class File2 {\n+    int b = 2;\n }\n"
+            ]
+
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            # Batch 1 succeeds with comment
+            resp1 = MagicMock()
+            resp1.text = json.dumps([{"path": "src/File1.java", "line": 2, "body": "Issue in File1", "severity": "WARNING"}])
+
+            # Batch 2 fails with 429 quota exhaustion on both attempts
+            quota_err = Exception("429 RESOURCE_EXHAUSTED: quota exceeded. retryDelay: '30s'")
+            mock_client.models.generate_content.side_effect = [resp1, quota_err, quota_err]
+
+            reviewer = TommiReviewer(config)
+            # Review should NOT raise QuotaExceededException because Batch 1 succeeded!
+            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+
+            self.assertEqual(len(comments), 1)
+            self.assertEqual(comments[0]["path"], "src/File1.java")
+            self.assertEqual(comments[0]["body"], "Issue in File1")
+            # Verify File2 was captured in unreviewed_files
+            self.assertEqual(reviewer.unreviewed_files, ["src/File2.java"])
+
+    @patch("src.reviewer.time.sleep")
+    @patch("src.reviewer.requests.get")
+    def test_review_pr_fast_failover_on_long_retry_delay(self, mock_requests_get, mock_sleep):
+        """
+        Verifies that when a candidate model hits a 429 with retryDelay > 15s,
+        it does not waste 5s retrying attempt 2 on the same model, but fails over to the next candidate model immediately.
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "diff --git a/src/Test.java b/src/Test.java\n+ int x = 1;\n"
+        mock_requests_get.return_value = mock_resp
+
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto"
+        )
+
+        with patch("src.reviewer.genai.Client") as mock_client_cls, \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.8-flash", "gemini-3.7-flash"]):
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            # Model 1 fails on attempt 1 with retryDelay of 35s
+            long_delay_err = Exception("429 RESOURCE_EXHAUSTED: retryDelay: '35s'")
+            # Model 2 succeeds immediately
+            success_resp = MagicMock()
+            success_resp.text = json.dumps([{"path": "src/Test.java", "line": 1, "body": "Clean comment", "severity": "WARNING"}])
+
+            mock_client.models.generate_content.side_effect = [long_delay_err, success_resp]
+
+            reviewer = TommiReviewer(config)
+            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+
+            self.assertEqual(len(comments), 1)
+            # Model 1 was only called once (did not waste a 2nd attempt due to long delay)
+            self.assertEqual(mock_client.models.generate_content.call_count, 2)
 
 
 if __name__ == "__main__":

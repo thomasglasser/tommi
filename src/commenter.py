@@ -51,7 +51,7 @@ class GitHubCommenter:
             return commits.reversed[0]
         return commits[-1]
 
-    def post_review_comments(self, comments: List[dict]) -> None:
+    def post_review_comments(self, comments: List[dict], summary_note: Optional[str] = None) -> None:
         """
         Posts review comments to the PR using GitHub's Batch Review API in a single HTTP request.
         Segregates off-diff comments into unplaced summary notes to guarantee batch submission succeeds.
@@ -82,6 +82,8 @@ class GitHubCommenter:
             f"**Review Findings**: {scorecard_str}\n\n"
             f"Please review the inline feedback below. For suggestions with code blocks, you can apply them directly."
         )
+        if summary_note:
+            summary_header = f"{summary_note}\n\n{summary_header}"
 
         # Build batch comments and unplaced notes payloads
         batch_comments = []

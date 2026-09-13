@@ -351,6 +351,66 @@ class TestMainErrorHandling(unittest.TestCase):
         mock_commenter.add_reaction.assert_any_call("eyes")
         mock_commenter.add_reaction.assert_any_call("rocket")
 
+    @patch("src.main.GitHubCommenter")
+    @patch("src.main.GitHubAuthManager")
+    @patch("src.main.TommiConfig.from_env")
+    @patch("src.main.TommiReviewer")
+    def test_main_handles_partial_review_with_comments(self, mock_reviewer_cls, mock_from_env, mock_auth_cls, mock_commenter_cls):
+        mock_config = MagicMock()
+        mock_config.event_name = "pull_request"
+        mock_config.is_merged = False
+        mock_config.comment_body = ""
+        mock_config.github_repository = "test/repo"
+        mock_config.pr_number = 1
+        mock_config.comment_id = None
+        mock_from_env.return_value = mock_config
+
+        mock_commenter = MagicMock()
+        mock_commenter_cls.return_value = mock_commenter
+
+        mock_reviewer = MagicMock()
+        mock_reviewer.review_pr.return_value = [{"path": "src/File1.java", "line": 1, "body": "Issue", "severity": "WARNING"}]
+        mock_reviewer.unreviewed_files = ["src/File2.java"]
+        mock_reviewer_cls.return_value = mock_reviewer
+
+        main()
+
+        mock_commenter.post_review_comments.assert_called_once()
+        call_kwargs = mock_commenter.post_review_comments.call_args[1]
+        self.assertIn("summary_note", call_kwargs)
+        self.assertIn("Partial Review Notice", call_kwargs["summary_note"])
+        self.assertIn("src/File2.java", call_kwargs["summary_note"])
+
+    @patch("src.main.GitHubCommenter")
+    @patch("src.main.GitHubAuthManager")
+    @patch("src.main.TommiConfig.from_env")
+    @patch("src.main.TommiReviewer")
+    def test_main_handles_partial_review_with_no_comments(self, mock_reviewer_cls, mock_from_env, mock_auth_cls, mock_commenter_cls):
+        mock_config = MagicMock()
+        mock_config.event_name = "pull_request"
+        mock_config.is_merged = False
+        mock_config.comment_body = ""
+        mock_config.github_repository = "test/repo"
+        mock_config.pr_number = 1
+        mock_config.comment_id = None
+        mock_from_env.return_value = mock_config
+
+        mock_commenter = MagicMock()
+        mock_commenter_cls.return_value = mock_commenter
+
+        mock_reviewer = MagicMock()
+        mock_reviewer.review_pr.return_value = []
+        mock_reviewer.unreviewed_files = ["src/File2.java"]
+        mock_reviewer_cls.return_value = mock_reviewer
+
+        main()
+
+        mock_commenter.post_issue_comment.assert_called_once()
+        comment_text = mock_commenter.post_issue_comment.call_args[0][0]
+        self.assertIn("Partial Review", comment_text)
+        self.assertIn("src/File2.java", comment_text)
+        mock_commenter.add_reaction.assert_any_call("rocket")
+
 
 if __name__ == "__main__":
     unittest.main()

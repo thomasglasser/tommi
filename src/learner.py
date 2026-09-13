@@ -10,7 +10,7 @@ from google.genai import types
 from src.config import TommiConfig
 from src.rules_loader import load_all_rules
 from src.models_resolver import resolve_candidate_models, resolve_model_name
-from src.reviewer import QuotaExceededException, HighDemandException
+from src.reviewer import QuotaExceededException, HighDemandException, extract_retry_delay
 
 logger = logging.getLogger("tommi.learner")
 
@@ -136,17 +136,37 @@ class TommiLearner:
                         encountered_429 = True
 
                     if is_503 or is_429:
-                        if attempt < max_attempts - 1:
-                            backoff_sec = (attempt + 1) * 5
+                        retry_delay = extract_retry_delay(e)
+                        if retry_delay is not None and retry_delay <= 15:
+                            backoff_sec = retry_delay + 1
+                            if attempt < max_attempts - 1:
+                                logger.warning(
+                                    f"Learner model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'} on attempt {attempt + 1}. "
+                                    f"Backing off for {backoff_sec:.1f}s before retry..."
+                                )
+                                time.sleep(backoff_sec)
+                                continue
+                            else:
+                                logger.warning(f"Learner model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}.")
+                                break
+                        elif retry_delay is not None and retry_delay > 15:
                             logger.warning(
-                                f"Learner model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'} on attempt {attempt + 1}. "
-                                f"Backing off for {backoff_sec}s before retry..."
+                                f"Learner model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
+                                f"Recommended retryDelay of {retry_delay:.1f}s exceeds short backoff. Failing over to next model immediately..."
                             )
-                            time.sleep(backoff_sec)
-                            continue
-                        else:
-                            logger.warning(f"Learner model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}.")
                             break
+                        else:
+                            if attempt < max_attempts - 1:
+                                backoff_sec = (attempt + 1) * 5
+                                logger.warning(
+                                    f"Learner model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'} on attempt {attempt + 1}. "
+                                    f"Backing off for {backoff_sec}s before retry..."
+                                )
+                                time.sleep(backoff_sec)
+                                continue
+                            else:
+                                logger.warning(f"Learner model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}.")
+                                break
                     else:
                         logger.warning(f"Failed to generate AI learning response with model '{model_name}': {e}")
                         break

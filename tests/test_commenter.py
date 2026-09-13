@@ -217,6 +217,25 @@ class TestGitHubCommenter(unittest.TestCase):
         issue_body = self.mock_pr.create_issue_comment.call_args[0][0]
         self.assertIn("`src/Test.java:10`", issue_body)
 
+    def test_post_review_comments_with_summary_note(self):
+        comments = [
+            {
+                "path": "src/Test.java",
+                "line": 10,
+                "body": "Issue 1",
+                "severity": "WARNING",
+                "is_valid_line": True,
+            }
+        ]
+        summary_note = "> ⚠️ **Partial Review Notice**: Due to temporary AI API rate limits, 2 file(s) could not be reviewed."
+
+        self.commenter.post_review_comments(comments, summary_note=summary_note)
+
+        self.mock_pr.create_review.assert_called_once()
+        kwargs = self.mock_pr.create_review.call_args[1]
+        self.assertIn(summary_note, kwargs["body"])
+        self.assertTrue(kwargs["body"].startswith(summary_note))
+
 
 if __name__ == "__main__":
     unittest.main()

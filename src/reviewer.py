@@ -25,12 +25,54 @@ class ReviewCommentItem(BaseModel):
     body: str = Field(description="The review comment explaining the issue and how to resolve it.")
 
 
+def extract_retry_delay(error: Exception) -> Optional[float]:
+    """
+    Extracts recommended retryDelay (in seconds) from a Google GenAI / API error if present.
+    Checks structured error details and regex matches in string representation.
+    """
+    try:
+        for attr in ("details", "error", "args"):
+            val = getattr(error, attr, None)
+            candidates_to_check = [val] if not isinstance(val, (list, tuple)) else list(val)
+            for item in candidates_to_check:
+                if isinstance(item, dict):
+                    details = item.get("details", [])
+                    if isinstance(details, list):
+                        for d in details:
+                            if isinstance(d, dict) and "retryDelay" in d:
+                                delay_str = str(d["retryDelay"]).rstrip("s")
+                                return float(delay_str)
+                    if "retryDelay" in item:
+                        delay_str = str(item["retryDelay"]).rstrip("s")
+                        return float(delay_str)
+    except Exception:
+        pass
+
+    err_text = str(error)
+    m = re.search(r"['\"]?retryDelay['\"]?\s*:\s*['\"]?([\d\.]+)s?['\"]?", err_text, re.IGNORECASE)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            pass
+
+    m2 = re.search(r"retry (?:in|after) ([\d\.]+)\s*s", err_text, re.IGNORECASE)
+    if m2:
+        try:
+            return float(m2.group(1))
+        except ValueError:
+            pass
+
+    return None
+
+
 class TommiReviewer:
     def __init__(self, config: TommiConfig, auth_token: Optional[str] = None, workspace_dir: Optional[str] = None):
         self.config = config
         self.auth_token = auth_token or config.github_token
         self.client = genai.Client(api_key=config.gemini_api_key)
         self.inspector = WorkspaceInspector(workspace_dir=workspace_dir)
+        self.unreviewed_files: List[str] = []
 
     def fetch_pr_diff(self, pr_url: str) -> str:
         """Fetches the raw diff of the PR using GitHub API."""
@@ -406,6 +448,12 @@ class TommiReviewer:
 
         all_comments_data = []
         preferred_model = None
+        self.unreviewed_files = []
+        successful_batches_count = 0
+        model_cooldowns: Dict[str, float] = {}
+        last_encountered_429 = False
+        last_encountered_503 = False
+        last_error = None
 
         for b_idx, batch_diff in enumerate(diff_batches):
             if len(diff_batches) > 1:
@@ -424,15 +472,30 @@ class TommiReviewer:
                 batch_info=batch_info,
             )
 
-            models_to_try = list(candidate_models)
-            if preferred_model and preferred_model in models_to_try:
-                models_to_try.remove(preferred_model)
-                models_to_try.insert(0, preferred_model)
+            # Organize candidate models respecting active cooldowns
+            now = time.time()
+            available_models = [m for m in candidate_models if model_cooldowns.get(m, 0) <= now]
+            cooling_models = [m for m in candidate_models if model_cooldowns.get(m, 0) > now]
+            cooling_models.sort(key=lambda m: model_cooldowns[m])
 
+            if preferred_model and preferred_model in available_models:
+                available_models.remove(preferred_model)
+                available_models.insert(0, preferred_model)
+
+            # If all models are cooling down, wait for the earliest one if within 45s
+            if not available_models and cooling_models:
+                earliest_model = cooling_models[0]
+                wait_sec = model_cooldowns[earliest_model] - now
+                if 0 < wait_sec <= 45:
+                    logger.info(
+                        f"All candidate models are on cooldown. Waiting {wait_sec:.1f}s for '{earliest_model}' to cool down..."
+                    )
+                    time.sleep(wait_sec + 1)
+                    available_models.append(earliest_model)
+                    cooling_models = cooling_models[1:]
+
+            models_to_try = available_models + cooling_models
             batch_comments = None
-            last_error = None
-            encountered_429 = False
-            encountered_503 = False
 
             for i, model_name in enumerate(models_to_try):
                 logger.info(f"Running Gemini review with model '{model_name}'...")
@@ -447,6 +510,7 @@ class TommiReviewer:
                         batch_comments = self._parse_and_repair_json(raw_json)
                         model_succeeded = True
                         preferred_model = model_name
+                        model_cooldowns.pop(model_name, None)
                         break
                     except Exception as e:
                         error_str = str(e).lower()
@@ -455,22 +519,45 @@ class TommiReviewer:
                         is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str or "rate limit" in error_str or "too many requests" in error_str
 
                         if is_503:
-                            encountered_503 = True
+                            last_encountered_503 = True
                         if is_429:
-                            encountered_429 = True
+                            last_encountered_429 = True
 
                         if is_503 or is_429:
-                            if attempt < max_attempts - 1:
-                                backoff_sec = 5
+                            retry_delay = extract_retry_delay(e)
+                            if retry_delay is not None and retry_delay <= 15:
+                                backoff_sec = retry_delay + 1
+                                if attempt < max_attempts - 1:
+                                    logger.warning(
+                                        f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
+                                        f"Backing off for {backoff_sec:.1f}s before retrying..."
+                                    )
+                                    time.sleep(backoff_sec)
+                                    continue
+                                else:
+                                    model_cooldowns[model_name] = time.time() + 60
+                                    logger.warning(f"Model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}: {e}")
+                                    break
+                            elif retry_delay is not None and retry_delay > 15:
+                                model_cooldowns[model_name] = time.time() + retry_delay
                                 logger.warning(
                                     f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
-                                    f"Backing off for {backoff_sec}s before retrying..."
+                                    f"Recommended retryDelay of {retry_delay:.1f}s exceeds short backoff. Marking model on cooldown and failing over immediately..."
                                 )
-                                time.sleep(backoff_sec)
-                                continue
-                            else:
-                                logger.warning(f"Model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}: {e}")
                                 break
+                            else:
+                                if attempt < max_attempts - 1:
+                                    backoff_sec = 5
+                                    logger.warning(
+                                        f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
+                                        f"Backing off for {backoff_sec}s before retrying..."
+                                    )
+                                    time.sleep(backoff_sec)
+                                    continue
+                                else:
+                                    model_cooldowns[model_name] = time.time() + 60
+                                    logger.warning(f"Model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}: {e}")
+                                    break
                         else:
                             logger.warning(f"Generation or JSON parsing failed with model '{model_name}': {e}")
                             if attempt < max_attempts - 1:
@@ -481,23 +568,35 @@ class TommiReviewer:
                 if model_succeeded and batch_comments is not None:
                     break
                 elif i < len(models_to_try) - 1:
-                    if encountered_429 or encountered_503:
+                    if last_encountered_429 or last_encountered_503:
                         time.sleep(1)
                     logger.info(f"Failing over to next candidate model '{models_to_try[i + 1]}'...")
 
             if batch_comments is None:
-                if encountered_429:
-                    raise QuotaExceededException(f"T.O.M.M.I. has run out of AI API quota / rate limit on batch {b_idx + 1}. Please try again later.")
-                elif encountered_503:
-                    raise HighDemandException(f"T.O.M.M.I. is currently experiencing high demand on batch {b_idx + 1}. Please try again in a few moments.")
-                elif last_error:
-                    raise RuntimeError(f"Failed to generate or parse AI review response on batch {b_idx + 1}: {last_error}") from last_error
-                raise RuntimeError("Failed to obtain response from Gemini API.")
-
-            all_comments_data.extend(batch_comments)
+                batch_file_paths = list(batch_parsed_diff.files.keys())
+                logger.warning(
+                    f"Batch {b_idx + 1}/{len(diff_batches)} failed after trying all candidate models ({len(batch_file_paths)} files skipped: {batch_file_paths}). "
+                    f"Preserving results from any successful batches."
+                )
+                self.unreviewed_files.extend(batch_file_paths)
+            else:
+                successful_batches_count += 1
+                all_comments_data.extend(batch_comments)
 
             if b_idx < len(diff_batches) - 1:
-                time.sleep(1)
+                time.sleep(3)
+
+        # Deduplicate unreviewed file paths while preserving order
+        self.unreviewed_files = list(dict.fromkeys(self.unreviewed_files))
+
+        if successful_batches_count == 0:
+            if last_encountered_429:
+                raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota / rate limit. Please try again later.")
+            elif last_encountered_503:
+                raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.")
+            elif last_error:
+                raise RuntimeError(f"Failed to generate or parse AI review response: {last_error}") from last_error
+            raise RuntimeError("Failed to obtain response from Gemini API.")
 
         # Validate, adjust line numbers, and sort by severity priority
         validated_comments = self._validate_comments(all_comments_data, parsed_diff)

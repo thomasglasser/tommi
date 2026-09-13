@@ -230,13 +230,34 @@ def main():
                 pr_url=pr.url,
             )
 
+            unreviewed = getattr(reviewer, "unreviewed_files", [])
+            summary_note = None
+            if unreviewed:
+                file_list_str = ", ".join(f"`{f}`" for f in unreviewed[:10])
+                if len(unreviewed) > 10:
+                    file_list_str += f" and {len(unreviewed) - 10} more"
+                summary_note = (
+                    f"> ⚠️ **Partial Review Notice**: Due to temporary AI API rate limits / high demand, the following {len(unreviewed)} "
+                    f"file(s) could not be reviewed: {file_list_str}. All findings from the successfully analyzed files are provided below."
+                )
+
             if not comments:
-                logger.info("No style violations or issues found.")
-                commenter.add_reaction("rocket")
-                commenter.post_issue_comment("✅ **T.O.M.M.I. Review**: Looks good! No rule violations or obvious bugs detected.")
+                if unreviewed:
+                    logger.info(f"No issues found in reviewed files, but {len(unreviewed)} file(s) were unreviewed.")
+                    partial_msg = (
+                        f"⚠️ **T.O.M.M.I. Partial Review**: No rule violations detected in the reviewed files.\n\n"
+                        f"> Due to temporary AI API rate limits / high demand, the following {len(unreviewed)} file(s) could not be reviewed: "
+                        f"{file_list_str}. You can re-run `/tommi review` once API quota refreshes."
+                    )
+                    commenter.add_reaction("rocket")
+                    commenter.post_issue_comment(partial_msg)
+                else:
+                    logger.info("No style violations or issues found.")
+                    commenter.add_reaction("rocket")
+                    commenter.post_issue_comment("✅ **T.O.M.M.I. Review**: Looks good! No rule violations or obvious bugs detected.")
             else:
                 logger.info(f"Posting {len(comments)} review comments...")
-                commenter.post_review_comments(comments)
+                commenter.post_review_comments(comments, summary_note=summary_note)
                 commenter.add_reaction("rocket")
 
         elif cmd_type == "unrecognized":
