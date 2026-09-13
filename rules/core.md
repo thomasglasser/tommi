@@ -10,6 +10,8 @@
 
 ## 2. Layout & Structure
 
+* **Private Method Placement**: Do NOT flag private methods as misplaced when they are positioned either at the bottom of the class (above inner classes, records, and enums) or directly below the public or protected methods that use them.
+
 * **Sequential Fallback Checks**: Do NOT suggest converting sequential `if` fallback assignments (e.g., `if (x == null) x = ...; if (x == null) x = ...;`) into `else if` chains; sequential execution is required to check whether previous fallback assignments evaluated to `null`.
 
 * **Inner Classes, Records & Enums Positioning**: Do NOT flag inner classes, records, or enums as violating class layout rules when they are properly declared at the very bottom of the class, even if fields or methods higher up reference them.
