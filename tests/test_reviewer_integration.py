@@ -698,6 +698,85 @@ index 1111111..2222222 100644
         self.assertIn("```java", validated[0]["body"])
         self.assertFalse(validated[0]["is_valid_line"])
 
+    def test_validate_comments_converts_suggestion_when_line_content_mismatches(self):
+        from src.diff_parser import parse_unified_diff
+        diff_text = """diff --git a/src/Test.java b/src/Test.java
+@@ -10,3 +10,3 @@
++    return false;
+"""
+        parsed_diff = parse_unified_diff(diff_text)
+        config = TommiConfig(gemini_api_key="fake", github_repository="test/repo", pr_number=1)
+        reviewer = TommiReviewer(config)
+
+        raw_comments = [
+            {
+                "path": "src/Test.java",
+                "line": 10,
+                "target_code": "int counter = 0;", # Mismatched target code
+                "body": "```suggestion\nint counter = 1;\n```",
+                "severity": "SUGGESTION"
+            }
+        ]
+
+        validated = reviewer._validate_comments(raw_comments, parsed_diff)
+        self.assertEqual(len(validated), 1)
+        # Because target code 'int counter = 0;' does not match 'return false;', suggestion is downgraded to ```java
+        self.assertNotIn("```suggestion", validated[0]["body"])
+        self.assertIn("```java", validated[0]["body"])
+
+    def test_validate_comments_converts_suggestion_when_targeting_lone_brace(self):
+        from src.diff_parser import parse_unified_diff
+        diff_text = """diff --git a/src/Test.java b/src/Test.java
+@@ -20,3 +20,3 @@
++    }
+"""
+        parsed_diff = parse_unified_diff(diff_text)
+        config = TommiConfig(gemini_api_key="fake", github_repository="test/repo", pr_number=1)
+        reviewer = TommiReviewer(config)
+
+        raw_comments = [
+            {
+                "path": "src/Test.java",
+                "line": 20,
+                "target_code": None,
+                "body": "```suggestion\n    doSomethingElse();\n```",
+                "severity": "SUGGESTION"
+            }
+        ]
+
+        validated = reviewer._validate_comments(raw_comments, parsed_diff)
+        self.assertEqual(len(validated), 1)
+        # Overwriting a lone closing brace is unsafe; suggestion block converted to ```java
+        self.assertNotIn("```suggestion", validated[0]["body"])
+        self.assertIn("```java", validated[0]["body"])
+
+    def test_validate_comments_preserves_valid_suggestion_matching_line(self):
+        from src.diff_parser import parse_unified_diff
+        diff_text = """diff --git a/src/Test.java b/src/Test.java
+@@ -30,3 +30,3 @@
++    List<String> list = new ArrayList<>();
+"""
+        parsed_diff = parse_unified_diff(diff_text)
+        config = TommiConfig(gemini_api_key="fake", github_repository="test/repo", pr_number=1)
+        reviewer = TommiReviewer(config)
+
+        raw_comments = [
+            {
+                "path": "src/Test.java",
+                "line": 30,
+                "target_code": "List<String> list = new ArrayList<>();",
+                "body": "```suggestion\nList<String> list = new ObjectArrayList<>();\n```",
+                "severity": "SUGGESTION"
+            }
+        ]
+
+        validated = reviewer._validate_comments(raw_comments, parsed_diff)
+        self.assertEqual(len(validated), 1)
+        self.assertTrue(validated[0]["is_valid_line"])
+        # Matches target line, so 1-click suggestion is preserved and indented
+        self.assertIn("```suggestion", validated[0]["body"])
+        self.assertIn("    List<String> list = new ObjectArrayList<>();", validated[0]["body"])
+
     @patch("src.reviewer.time.sleep")
     @patch("src.reviewer.requests.get")
     def test_review_pr_multi_batch(self, mock_requests_get, mock_sleep):

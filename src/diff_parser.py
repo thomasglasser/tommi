@@ -64,8 +64,8 @@ class ParsedDiff:
         """Returns True if the line number exists in the right side of the diff for this file."""
         return file_path in self.files and line_number in self.files[file_path]
 
-    def get_closest_valid_line(self, file_path: str, target_line: int, max_distance: int = 30) -> Optional[int]:
-        """Finds the closest valid line in the file diff if within max_distance lines."""
+    def get_closest_valid_line(self, file_path: str, target_line: int, max_distance: int = 3) -> Optional[int]:
+        """Finds the closest valid line in the file diff if within max_distance lines (default 3)."""
         if file_path not in self.files or not self.files[file_path]:
             return None
         valid_lines = sorted(self.files[file_path])
@@ -84,7 +84,8 @@ class ParsedDiff:
     def find_matching_line(self, file_path: str, target_snippet: str, preferred_line: Optional[int] = None) -> Optional[int]:
         """
         Finds the line number in the file diff that best matches target_snippet.
-        Checks preferred_line first, then nearby lines (+/- 30), then the entire diff for that file.
+        Checks preferred_line first, then immediate nearby lines (+/- 5), then wider window (+/- 15)
+        for distinctive snippets, and finally whole diff search ONLY if the snippet is uniquely matched.
         """
         if file_path not in self.line_contents or not self.line_contents[file_path]:
             return None
@@ -93,28 +94,53 @@ class ParsedDiff:
         if not clean_target:
             return None
 
-        # If clean_target is multi-line, take the first non-empty line
-        first_line_target = next((l.strip() for l in clean_target.splitlines() if l.strip()), clean_target)
+        # Filter lines to find the best representative line if target_snippet is multi-line
+        candidate_lines = [l.strip() for l in clean_target.splitlines() if l.strip()]
+        # Filter out comments, lone braces, or bare annotations to avoid tagging the wrong line
+        substantive_lines = [
+            l for l in candidate_lines
+            if not l.startswith(("//", "/*", "*"))
+            and l not in ("{", "}", "};", ");", "})")
+            and not l.startswith(("@Override", "@Nullable", "@NotNull", "@Deprecated", "@SubscribeEvent"))
+        ]
+        best_target = substantive_lines[0] if substantive_lines else candidate_lines[0]
+        if not best_target:
+            return None
 
         file_lines = self.line_contents[file_path]
+        ct_bare = best_target.rstrip(";{}(),.").strip()
+        is_trivial = len(ct_bare) < 6 or ct_bare.lower() in (
+            "return true", "return false", "return null", "return", "break", "continue", "super()"
+        )
 
         def _matches(content_str: str) -> bool:
             c = content_str.strip()
             if not c:
                 return False
-            if first_line_target in c:
+            # 1. Exact match
+            if best_target == c:
                 return True
-            if len(c) >= 5 and c in first_line_target:
-                return True
-            ct_bare = first_line_target.rstrip(";{}(),.").strip()
+            # 2. Bare match (without trailing punctuation/braces)
             c_bare = c.rstrip(";{}(),.").strip()
-            if len(ct_bare) >= 3 and len(c_bare) >= 3:
-                if ct_bare in c_bare or c_bare in ct_bare:
-                    return True
-            if "=" in first_line_target and "=" in c:
-                left_target = first_line_target.split("=")[0].strip()
+            if len(ct_bare) >= 6 and ct_bare == c_bare:
+                return True
+            # Trivial statements must not match substrings or prefixes
+            if is_trivial:
+                return False
+            # 3. Substring match (requires >= 8 chars to avoid false positives)
+            if len(best_target) >= 8 and (best_target in c or (len(c) >= 8 and c in best_target)):
+                return True
+            # 4. Assignment match: left-hand sides match
+            if "=" in best_target and "=" in c:
+                left_target = best_target.split("=")[0].strip()
                 left_c = c.split("=")[0].strip()
-                if len(left_target) >= 3 and left_target == left_c:
+                if len(left_target) >= 5 and left_target == left_c:
+                    return True
+            # 5. Method call / signature match
+            if "(" in best_target and "(" in c:
+                left_target = best_target.split("(")[0].strip()
+                left_c = c.split("(")[0].strip()
+                if len(left_target) >= 8 and left_target == left_c:
                     return True
             return False
 
@@ -123,19 +149,36 @@ class ParsedDiff:
             if _matches(file_lines[preferred_line]):
                 return preferred_line
 
-        # 2. Windowed search around preferred_line (+/- 30 lines)
+        # If snippet is trivial, do NOT search away from preferred_line
+        if is_trivial:
+            return None
+
+        # 2. Immediate local window around preferred_line (+/- 5 lines, ordered by proximity)
         if preferred_line:
-            candidates = sorted(file_lines.keys(), key=lambda l: abs(l - preferred_line))
-            for line_num in candidates:
-                if abs(line_num - preferred_line) > 30:
-                    break
-                if _matches(file_lines[line_num]):
+            local_offsets = []
+            for delta in range(1, 6):
+                local_offsets.append(preferred_line + delta)
+                local_offsets.append(preferred_line - delta)
+            for line_num in local_offsets:
+                if line_num in file_lines and _matches(file_lines[line_num]):
                     return line_num
 
-        # 3. Search throughout all diff lines for this file
-        for line_num, content in file_lines.items():
-            if _matches(content):
-                return line_num
+        # 3. Extended window (+/- 15 lines), only if snippet has substantive length (>= 8 chars)
+        if preferred_line and len(best_target) >= 8:
+            extended_offsets = []
+            for delta in range(6, 16):
+                extended_offsets.append(preferred_line + delta)
+                extended_offsets.append(preferred_line - delta)
+            for line_num in extended_offsets:
+                if line_num in file_lines and _matches(file_lines[line_num]):
+                    return line_num
+
+        # 4. Search throughout all diff lines for this file ONLY if the snippet is distinctive
+        # (>= 15 chars) AND the match is UNIQUE across the file's diff
+        if len(best_target) >= 15:
+            matching_lines = [line_num for line_num, content in file_lines.items() if _matches(content)]
+            if len(matching_lines) == 1:
+                return matching_lines[0]
 
         return None
 

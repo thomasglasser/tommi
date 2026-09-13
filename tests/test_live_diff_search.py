@@ -65,15 +65,15 @@ class TestLiveDiffSearch(unittest.TestCase):
         self.assertFalse(parsed.is_line_in_diff(path, 293))
         logger.info("Verified: Line 293 is NOT in diff (falls in gap between hunks 213 and 319).")
 
-        # Snapping with max_distance=3 failed previously (distance to 316 is 23)
-        old_snapped = parsed.get_closest_valid_line(path, 293, max_distance=3)
-        self.assertIsNone(old_snapped)
-        logger.info(f"Verified: Line 293 with max_distance=3 correctly returns None (old bug behavior).")
+        # Snapping with default max_distance=3 returns None (distance to 319 is 26)
+        default_snapped = parsed.get_closest_valid_line(path, 293)
+        self.assertIsNone(default_snapped)
+        logger.info(f"Verified: Line 293 with default max_distance=3 correctly returns None (tightened snapping).")
 
-        # Snapping with default max_distance=30 successfully snaps to 319
-        snapped = parsed.get_closest_valid_line(path, 293)
-        self.assertEqual(snapped, 319)
-        logger.info(f"Verified: Line 293 with max_distance=30 successfully snapped to line {snapped} in active hunk.")
+        # Snapping with explicit max_distance=30 can still snap to 319 if requested
+        snapped_30 = parsed.get_closest_valid_line(path, 293, max_distance=30)
+        self.assertEqual(snapped_30, 319)
+        logger.info(f"Verified: Line 293 with max_distance=30 successfully snapped to line {snapped_30} in active hunk.")
 
         # Code search finds line 319
         matched = parsed.find_matching_line(path, "ServerLevel level = player.serverLevel();", preferred_line=293)
@@ -90,7 +90,7 @@ class TestLiveDiffSearch(unittest.TestCase):
         reviewer = TommiReviewer(config)
 
         raw_comments = [
-            {"path": path, "line": 293, "body": "Issue near 293", "severity": "WARNING"},
+            {"path": path, "line": 293, "target_code": "ServerLevel level = player.serverLevel();", "body": "Issue near 293", "severity": "WARNING"},
             {"path": path, "line": 150, "body": "Far off-diff issue", "severity": "SUGGESTION"},
         ]
         validated = reviewer._validate_comments(raw_comments, parsed)
@@ -99,7 +99,7 @@ class TestLiveDiffSearch(unittest.TestCase):
         for c in validated:
             logger.info(f" - {c['path']}:{c['line']} (is_valid_line={c.get('is_valid_line')}) -> {c['body']}")
 
-        # Line 293 snapped to 319 and is valid
+        # Line 293 matched target_code to 319 and is valid
         self.assertEqual(validated[0]["line"], 319)
         self.assertTrue(validated[0]["is_valid_line"])
 

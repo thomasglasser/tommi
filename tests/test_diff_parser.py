@@ -105,11 +105,14 @@ class TestDiffParser(unittest.TestCase):
         parsed = parse_unified_diff(SAMPLE_DIFF)
         path = "src/main/java/com/example/MyClass.java"
 
-        # Default max_distance is 30: line 40 is 22 lines away from 18 -> should snap to 18
-        self.assertEqual(parsed.get_closest_valid_line(path, 40), 18)
+        # Default max_distance is 3: line 21 is 3 lines away from 18 -> should snap to 18
+        self.assertEqual(parsed.get_closest_valid_line(path, 21), 18)
 
-        # Line 60 is 42 lines away from 18 -> exceeds 30 lines, should return None
-        self.assertIsNone(parsed.get_closest_valid_line(path, 60))
+        # Line 25 is 7 lines away from 18 -> exceeds default 3 lines, should return None
+        self.assertIsNone(parsed.get_closest_valid_line(path, 25))
+
+        # Explicit max_distance=30: line 40 is 22 lines away from 18 -> should snap to 18
+        self.assertEqual(parsed.get_closest_valid_line(path, 40, max_distance=30), 18)
 
     def test_ignored_patterns_and_extensions(self):
         from src.diff_parser import is_reviewable_file

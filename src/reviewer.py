@@ -826,6 +826,96 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 
         return pattern.sub(_replace_block, body)
 
+    def _get_code_language(self, path: str) -> str:
+        ext = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+        return {
+            "java": "java",
+            "py": "python",
+            "kt": "kotlin",
+            "ts": "typescript",
+            "js": "javascript",
+            "rs": "rust",
+            "cpp": "cpp",
+            "c": "c",
+            "cs": "csharp",
+            "go": "go",
+            "json": "json",
+            "gradle": "groovy",
+        }.get(ext, "java")
+
+    def _is_code_similar(self, a: str, b: str) -> bool:
+        ca = a.strip()
+        cb = b.strip()
+        if not ca or not cb:
+            return False
+        if ca == cb:
+            return True
+        if ca in cb or cb in ca:
+            return True
+        bare_a = ca.rstrip(";{}(),.").strip()
+        bare_b = cb.rstrip(";{}(),.").strip()
+        if len(bare_a) >= 5 and len(bare_b) >= 5:
+            if bare_a == bare_b or bare_a in bare_b or bare_b in bare_a:
+                return True
+        # Token overlap check for statements
+        words_a = set(re.findall(r"[A-Za-z0-9_]{3,}", ca))
+        words_b = set(re.findall(r"[A-Za-z0-9_]{3,}", cb))
+        common_words = words_a.intersection(words_b)
+        common_words -= {
+            "public", "private", "protected", "static", "final", "void", "return",
+            "this", "null", "true", "false", "new", "class", "interface"
+        }
+        return len(common_words) >= 1
+
+    def _is_suggestion_safe(
+        self,
+        body: str,
+        path: str,
+        line: int,
+        target_code: Optional[str],
+        parsed_diff: ParsedDiff,
+        was_snapped: bool,
+        is_valid_line: bool,
+    ) -> bool:
+        if not is_valid_line:
+            return False
+
+        if "```suggestion" not in body:
+            return True
+
+        if path not in parsed_diff.line_contents or line not in parsed_diff.line_contents[path]:
+            return False
+
+        target_line_content = parsed_diff.line_contents[path][line].strip()
+        if not target_line_content:
+            return False
+
+        # If snapped by proximity across lines, only allow suggestion if target_code actually matches the snapped line
+        if was_snapped:
+            if target_code and self._is_code_similar(target_code, target_line_content):
+                return True
+            return False
+
+        # Structural brackets / empty lines should not be overwritten by multi-line code suggestions
+        if target_line_content in ("}", "{", ");", "};"):
+            sugg_match = re.search(r"```suggestion\r?\n(.*?)\r?\n```", body, re.DOTALL)
+            if sugg_match and sugg_match.group(1).strip() not in ("}", "{", ");", "};"):
+                return False
+
+        # If the AI specified target_code, verify that the line at `line` actually resembles it
+        if target_code:
+            return self._is_code_similar(target_code, target_line_content)
+
+        # If no target_code was specified, check similarity with suggestion lines
+        sugg_match = re.search(r"```suggestion\r?\n(.*?)\r?\n```", body, re.DOTALL)
+        if sugg_match:
+            sugg_code = sugg_match.group(1).strip()
+            first_sugg_line = next((l.strip() for l in sugg_code.splitlines() if l.strip()), "")
+            if first_sugg_line:
+                return self._is_code_similar(first_sugg_line, target_line_content)
+
+        return True
+
     def _validate_comments(self, raw_comments: List[Dict[str, Any]], parsed_diff: ParsedDiff) -> List[Dict[str, Any]]:
         severity_rank = {
             "CRITICAL": 1,
@@ -867,21 +957,27 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
                     logger.info(f"Realigned comment on '{path}' from line {line} to line {matched_line} (matched '{extracted_target[:40]}...')")
                     line = matched_line
 
-            # 2. Strict line-in-diff validation
+            # 2. Strict line-in-diff validation & tight proximity snapping (<= 3 lines)
             is_valid_line = parsed_diff.is_line_in_diff(path, line)
+            was_snapped = False
             if not is_valid_line:
-                closest = parsed_diff.get_closest_valid_line(path, line, max_distance=30)
+                closest = parsed_diff.get_closest_valid_line(path, line, max_distance=3)
                 if closest is not None:
                     line = closest
                     is_valid_line = True
-                else:
-                    # Line is far outside the diff hunks. If comment includes a ```suggestion, convert it to
-                    # a standard code block so it cannot corrupt unrelated lines when posted.
-                    if "```suggestion" in body:
-                        body = body.replace("```suggestion", "```java")
-                        logger.warning(f"Comment on '{path}:{line}' is outside diff range; converted suggestion block to regular code block.")
+                    was_snapped = True
 
-            # 3. Indentation alignment for GitHub 1-click suggestions
+            # 3. Suggestion safety verification
+            if "```suggestion" in body:
+                if not self._is_suggestion_safe(body, path, line, extracted_target, parsed_diff, was_snapped, is_valid_line):
+                    lang = self._get_code_language(path)
+                    body = re.sub(r"```suggestion\b", f"```{lang}", body)
+                    logger.warning(
+                        f"Comment on '{path}:{line}' has unsafe suggestion for target line; "
+                        f"converted suggestion block to regular ```{lang} code block."
+                    )
+
+            # 4. Indentation alignment for validated GitHub 1-click suggestions
             if is_valid_line and "```suggestion" in body:
                 body = self._align_suggestion_indentation(body, path, line, parsed_diff)
 
