@@ -2,7 +2,7 @@ import json
 import logging
 import re
 import time
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import requests
 from google import genai
 from google.genai import types
@@ -424,10 +424,142 @@ class TommiReviewer:
                 raise gen_err
         return self._extract_response_text(final_response)
 
+    def _review_batch(
+        self,
+        batch_diff: str,
+        batch_parsed_diff: ParsedDiff,
+        b_idx: int,
+        total_batches: int,
+        pr_title: str,
+        pr_body: str,
+        rules: LoadedRules,
+        candidate_models: List[str],
+        model_cooldowns: Dict[str, float],
+        preferred_model: Optional[str],
+        enable_tools: bool = False,
+    ) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str], bool, bool, Optional[Exception]]:
+        batch_annotated_diff = format_annotated_diff(batch_diff)
+        batch_info = (b_idx + 1, total_batches) if total_batches > 1 else None
+        batch_prompt = self._build_review_prompt(
+            pr_title,
+            pr_body,
+            batch_annotated_diff,
+            rules,
+            parsed_diff=batch_parsed_diff,
+            enable_tools=enable_tools,
+            batch_info=batch_info,
+        )
+
+        # Organize candidate models respecting active cooldowns
+        now = time.time()
+        available_models = [m for m in candidate_models if model_cooldowns.get(m, 0) <= now]
+        cooling_models = [m for m in candidate_models if model_cooldowns.get(m, 0) > now]
+        cooling_models.sort(key=lambda m: model_cooldowns[m])
+
+        if preferred_model and preferred_model in available_models:
+            available_models.remove(preferred_model)
+            available_models.insert(0, preferred_model)
+
+        # If all models are cooling down, wait for the earliest one if within 45s
+        if not available_models and cooling_models:
+            earliest_model = cooling_models[0]
+            wait_sec = model_cooldowns[earliest_model] - now
+            if 0 < wait_sec <= 45:
+                logger.info(
+                    f"All candidate models are on cooldown. Waiting {wait_sec:.1f}s for '{earliest_model}' to cool down..."
+                )
+                time.sleep(wait_sec + 1)
+                available_models.append(earliest_model)
+                cooling_models = cooling_models[1:]
+
+        models_to_try = available_models + cooling_models
+        batch_comments = None
+        succeeded_model = None
+        encountered_429 = False
+        encountered_503 = False
+        last_error = None
+
+        for i, model_name in enumerate(models_to_try):
+            logger.info(f"Running Gemini review with model '{model_name}'...")
+            model_succeeded = False
+            max_attempts = 2
+
+            for attempt in range(max_attempts):
+                # Only use tools on attempt 0 if explicitly enabled; retry attempt always disables tools
+                use_tools = enable_tools if attempt == 0 else False
+                try:
+                    raw_json = self._execute_review_generation(model_name, batch_prompt, enable_tools=use_tools)
+                    batch_comments = self._parse_and_repair_json(raw_json)
+                    model_succeeded = True
+                    succeeded_model = model_name
+                    model_cooldowns.pop(model_name, None)
+                    break
+                except Exception as e:
+                    error_str = str(e).lower()
+                    last_error = e
+                    is_503 = "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str
+                    is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str or "rate limit" in error_str or "too many requests" in error_str
+
+                    if is_503:
+                        encountered_503 = True
+                    if is_429:
+                        encountered_429 = True
+
+                    if is_503 or is_429:
+                        retry_delay = extract_retry_delay(e)
+                        if retry_delay is not None and retry_delay <= 15:
+                            backoff_sec = retry_delay + 1
+                            if attempt < max_attempts - 1:
+                                logger.warning(
+                                    f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
+                                    f"Backing off for {backoff_sec:.1f}s before retrying..."
+                                )
+                                time.sleep(backoff_sec)
+                                continue
+                            else:
+                                model_cooldowns[model_name] = time.time() + 60
+                                logger.warning(f"Model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}: {e}")
+                                break
+                        elif retry_delay is not None and retry_delay > 15:
+                            model_cooldowns[model_name] = time.time() + retry_delay
+                            logger.warning(
+                                f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
+                                f"Recommended retryDelay of {retry_delay:.1f}s exceeds short backoff. Marking model on cooldown and failing over immediately..."
+                            )
+                            break
+                        else:
+                            if attempt < max_attempts - 1:
+                                backoff_sec = 5
+                                logger.warning(
+                                    f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
+                                    f"Backing off for {backoff_sec}s before retrying..."
+                                )
+                                time.sleep(backoff_sec)
+                                continue
+                            else:
+                                model_cooldowns[model_name] = time.time() + 60
+                                logger.warning(f"Model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}: {e}")
+                                break
+                    else:
+                        logger.warning(f"Generation or JSON parsing failed with model '{model_name}': {e}")
+                        if attempt < max_attempts - 1:
+                            time.sleep(1)
+                            continue
+                        break
+
+            if model_succeeded and batch_comments is not None:
+                break
+            elif i < len(models_to_try) - 1:
+                if encountered_429 or encountered_503:
+                    time.sleep(1)
+                logger.info(f"Failing over to next candidate model '{models_to_try[i + 1]}'...")
+
+        return batch_comments, succeeded_model, encountered_429, encountered_503, last_error
+
     def review_pr(self, pr_title: str, pr_body: str, pr_url: str, enable_tools: bool = False) -> List[Dict[str, Any]]:
         """
         Executes code review analysis on the pull request with transient error retry,
-        automatic diff batching for large PRs, and model candidate failover.
+        automatic diff batching for large PRs, model candidate failover, and a second retry pass for any failed batches.
         """
         logger.info(f"Fetching PR #{self.config.pr_number} diff...")
         diff_text = self.fetch_pr_diff(pr_url)
@@ -435,6 +567,7 @@ class TommiReviewer:
         filtered_diff = filter_diff_for_review(diff_text)
         if not filtered_diff.strip():
             logger.info("PR diff contains no reviewable code files. Nothing to review.")
+            self.unreviewed_files = []
             return []
 
         parsed_diff = parse_unified_diff(filtered_diff)
@@ -454,137 +587,100 @@ class TommiReviewer:
         last_encountered_429 = False
         last_encountered_503 = False
         last_error = None
+        failed_batches: List[Tuple[int, str, ParsedDiff]] = []
 
+        # === PASS 1: Sequential review across all diff batches ===
         for b_idx, batch_diff in enumerate(diff_batches):
             if len(diff_batches) > 1:
                 logger.info(f"--- Reviewing PR diff batch {b_idx + 1}/{len(diff_batches)} ({len(batch_diff)} chars) ---")
 
             batch_parsed_diff = parse_unified_diff(batch_diff)
-            batch_annotated_diff = format_annotated_diff(batch_diff)
-            batch_info = (b_idx + 1, len(diff_batches)) if len(diff_batches) > 1 else None
-            batch_prompt = self._build_review_prompt(
-                pr_title,
-                pr_body,
-                batch_annotated_diff,
-                rules,
-                parsed_diff=batch_parsed_diff,
+            comments, succ_model, is_429, is_503, err = self._review_batch(
+                batch_diff=batch_diff,
+                batch_parsed_diff=batch_parsed_diff,
+                b_idx=b_idx,
+                total_batches=len(diff_batches),
+                pr_title=pr_title,
+                pr_body=pr_body,
+                rules=rules,
+                candidate_models=candidate_models,
+                model_cooldowns=model_cooldowns,
+                preferred_model=preferred_model,
                 enable_tools=enable_tools,
-                batch_info=batch_info,
             )
 
-            # Organize candidate models respecting active cooldowns
-            now = time.time()
-            available_models = [m for m in candidate_models if model_cooldowns.get(m, 0) <= now]
-            cooling_models = [m for m in candidate_models if model_cooldowns.get(m, 0) > now]
-            cooling_models.sort(key=lambda m: model_cooldowns[m])
+            if is_429:
+                last_encountered_429 = True
+            if is_503:
+                last_encountered_503 = True
+            if err:
+                last_error = err
 
-            if preferred_model and preferred_model in available_models:
-                available_models.remove(preferred_model)
-                available_models.insert(0, preferred_model)
-
-            # If all models are cooling down, wait for the earliest one if within 45s
-            if not available_models and cooling_models:
-                earliest_model = cooling_models[0]
-                wait_sec = model_cooldowns[earliest_model] - now
-                if 0 < wait_sec <= 45:
-                    logger.info(
-                        f"All candidate models are on cooldown. Waiting {wait_sec:.1f}s for '{earliest_model}' to cool down..."
-                    )
-                    time.sleep(wait_sec + 1)
-                    available_models.append(earliest_model)
-                    cooling_models = cooling_models[1:]
-
-            models_to_try = available_models + cooling_models
-            batch_comments = None
-
-            for i, model_name in enumerate(models_to_try):
-                logger.info(f"Running Gemini review with model '{model_name}'...")
-                model_succeeded = False
-                max_attempts = 2
-
-                for attempt in range(max_attempts):
-                    # Only use tools on attempt 0 if explicitly enabled; retry attempt always disables tools
-                    use_tools = enable_tools if attempt == 0 else False
-                    try:
-                        raw_json = self._execute_review_generation(model_name, batch_prompt, enable_tools=use_tools)
-                        batch_comments = self._parse_and_repair_json(raw_json)
-                        model_succeeded = True
-                        preferred_model = model_name
-                        model_cooldowns.pop(model_name, None)
-                        break
-                    except Exception as e:
-                        error_str = str(e).lower()
-                        last_error = e
-                        is_503 = "503" in error_str or "high demand" in error_str or "unavailable" in error_str or "overloaded" in error_str
-                        is_429 = "429" in error_str or "quota" in error_str or "exhausted" in error_str or "resourceexhausted" in error_str or "rate limit" in error_str or "too many requests" in error_str
-
-                        if is_503:
-                            last_encountered_503 = True
-                        if is_429:
-                            last_encountered_429 = True
-
-                        if is_503 or is_429:
-                            retry_delay = extract_retry_delay(e)
-                            if retry_delay is not None and retry_delay <= 15:
-                                backoff_sec = retry_delay + 1
-                                if attempt < max_attempts - 1:
-                                    logger.warning(
-                                        f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
-                                        f"Backing off for {backoff_sec:.1f}s before retrying..."
-                                    )
-                                    time.sleep(backoff_sec)
-                                    continue
-                                else:
-                                    model_cooldowns[model_name] = time.time() + 60
-                                    logger.warning(f"Model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}: {e}")
-                                    break
-                            elif retry_delay is not None and retry_delay > 15:
-                                model_cooldowns[model_name] = time.time() + retry_delay
-                                logger.warning(
-                                    f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
-                                    f"Recommended retryDelay of {retry_delay:.1f}s exceeds short backoff. Marking model on cooldown and failing over immediately..."
-                                )
-                                break
-                            else:
-                                if attempt < max_attempts - 1:
-                                    backoff_sec = 5
-                                    logger.warning(
-                                        f"Model '{model_name}' encountered {'high demand (503)' if is_503 else 'rate limit (429)'}: {e}. "
-                                        f"Backing off for {backoff_sec}s before retrying..."
-                                    )
-                                    time.sleep(backoff_sec)
-                                    continue
-                                else:
-                                    model_cooldowns[model_name] = time.time() + 60
-                                    logger.warning(f"Model '{model_name}' exhausted retries on {'503 high demand' if is_503 else '429 rate limit'}: {e}")
-                                    break
-                        else:
-                            logger.warning(f"Generation or JSON parsing failed with model '{model_name}': {e}")
-                            if attempt < max_attempts - 1:
-                                time.sleep(1)
-                                continue
-                            break
-
-                if model_succeeded and batch_comments is not None:
-                    break
-                elif i < len(models_to_try) - 1:
-                    if last_encountered_429 or last_encountered_503:
-                        time.sleep(1)
-                    logger.info(f"Failing over to next candidate model '{models_to_try[i + 1]}'...")
-
-            if batch_comments is None:
-                batch_file_paths = list(batch_parsed_diff.files.keys())
-                logger.warning(
-                    f"Batch {b_idx + 1}/{len(diff_batches)} failed after trying all candidate models ({len(batch_file_paths)} files skipped: {batch_file_paths}). "
-                    f"Preserving results from any successful batches."
-                )
-                self.unreviewed_files.extend(batch_file_paths)
-            else:
+            if comments is not None:
                 successful_batches_count += 1
-                all_comments_data.extend(batch_comments)
+                preferred_model = succ_model
+                all_comments_data.extend(comments)
+            else:
+                failed_batches.append((b_idx, batch_diff, batch_parsed_diff))
 
             if b_idx < len(diff_batches) - 1:
                 time.sleep(3)
+
+        # === PASS 2: Rerun any failed batches after cooldown ===
+        if failed_batches:
+            logger.info(
+                f"Pass 1 completed with {len(failed_batches)} failed batch(es). "
+                f"Attempting second pass to achieve full review coverage..."
+            )
+            # Check if any model cooldowns are active; wait if the earliest will expire within 30s
+            now = time.time()
+            cooling = [model_cooldowns[m] for m in candidate_models if model_cooldowns.get(m, 0) > now]
+            if cooling:
+                min_wait = min(cooling) - now
+                if 0 < min_wait <= 30:
+                    logger.info(f"Waiting {min_wait:.1f}s for candidate model cooldown to expire before retry pass...")
+                    time.sleep(min_wait + 1)
+                else:
+                    time.sleep(3)
+            else:
+                time.sleep(3)
+
+            for b_idx, batch_diff, batch_parsed_diff in failed_batches:
+                logger.info(f"--- Retrying failed PR diff batch {b_idx + 1}/{len(diff_batches)} (Pass 2) ---")
+                comments, succ_model, is_429, is_503, err = self._review_batch(
+                    batch_diff=batch_diff,
+                    batch_parsed_diff=batch_parsed_diff,
+                    b_idx=b_idx,
+                    total_batches=len(diff_batches),
+                    pr_title=pr_title,
+                    pr_body=pr_body,
+                    rules=rules,
+                    candidate_models=candidate_models,
+                    model_cooldowns=model_cooldowns,
+                    preferred_model=preferred_model,
+                    enable_tools=False,
+                )
+
+                if is_429:
+                    last_encountered_429 = True
+                if is_503:
+                    last_encountered_503 = True
+                if err:
+                    last_error = err
+
+                if comments is not None:
+                    successful_batches_count += 1
+                    preferred_model = succ_model
+                    all_comments_data.extend(comments)
+                    logger.info(f"Retry pass succeeded for batch {b_idx + 1}! Recovered {len(comments)} comment(s).")
+                else:
+                    batch_files = list(batch_parsed_diff.files.keys())
+                    logger.warning(
+                        f"Batch {b_idx + 1}/{len(diff_batches)} failed on retry pass ({len(batch_files)} files skipped: {batch_files})."
+                    )
+                    self.unreviewed_files.extend(batch_files)
+
+                time.sleep(2)
 
         # Deduplicate unreviewed file paths while preserving order
         self.unreviewed_files = list(dict.fromkeys(self.unreviewed_files))
