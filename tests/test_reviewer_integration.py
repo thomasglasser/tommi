@@ -369,35 +369,7 @@ Hope this helps! See [guidelines] {docs}."""
             self.assertIsNotNone(gen_config)
             self.assertEqual(gen_config.response_mime_type, "application/json")
             self.assertIsNotNone(gen_config.response_schema)
-            self.assertIsNotNone(gen_config.thinking_config)
-            self.assertEqual(gen_config.thinking_config.thinking_budget, -1)
-            self.assertEqual(gen_config.thinking_config.thinking_level, types.ThinkingLevel.HIGH)
-
-    def test_execute_review_generation_thinking_budget_fallback(self):
-        config = TommiConfig(gemini_api_key="key", github_repository="owner/repo", pr_number=1)
-        with patch("src.reviewer.genai.Client") as mock_client_cls:
-            mock_client = MagicMock()
-            mock_client_cls.return_value = mock_client
-
-            mock_resp = MagicMock()
-            mock_resp.function_calls = None
-            mock_resp.candidates = []
-            mock_resp.text = "[]"
-
-            # Call 1 fails (combined), Call 2 fails (budget-only), Call 3 succeeds (no thinking)
-            mock_client.models.generate_content.side_effect = [
-                Exception("Invalid argument: thinking_level is not supported by model"),
-                Exception("Invalid argument: thinking_budget is not supported by model"),
-                mock_resp
-            ]
-
-            reviewer = TommiReviewer(config)
-            res = reviewer._execute_review_generation("gemini-1.5-flash", "test prompt", enable_tools=False)
-
-            self.assertEqual(res, "[]")
-            self.assertEqual(mock_client.models.generate_content.call_count, 3)
-            third_call_config = mock_client.models.generate_content.call_args_list[2].kwargs.get("config")
-            self.assertIsNone(third_call_config.thinking_config)
+            self.assertIsNone(getattr(gen_config, "thinking_config", None))
 
     @patch("src.reviewer.requests.get")
     @patch("src.reviewer.time.sleep")
