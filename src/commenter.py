@@ -83,7 +83,7 @@ class GitHubCommenter:
             f"Please review the inline feedback below. For suggestions with code blocks, you can apply them directly."
         )
         if summary_note:
-            summary_header = f"{summary_note}\n\n{summary_header}"
+            summary_header = f"{summary_header}\n\n{summary_note}"
 
         # Build batch comments and unplaced notes payloads
         batch_comments = []

@@ -233,8 +233,7 @@ class TestGitHubCommenter(unittest.TestCase):
 
         self.mock_pr.create_review.assert_called_once()
         kwargs = self.mock_pr.create_review.call_args[1]
-        self.assertIn(summary_note, kwargs["body"])
-        self.assertTrue(kwargs["body"].startswith(summary_note))
+        self.assertIn("apply them directly.\n\n" + summary_note, kwargs["body"])
 
 
 if __name__ == "__main__":
