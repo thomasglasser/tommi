@@ -34,6 +34,8 @@
 
 ## 4. Naming & Terminology
 
+* **Tool vs. Weapon Terminology**: Use the term "tool" for any item that has utility or uses beyond combat (e.g., axes, swords due to block interactions like cobwebs, or yoyos/canes/staves with non-combat utility). Reserve "weapon" strictly for items with exclusively combat uses (e.g., a mace). Do NOT flag items with non-combat utility or interaction mechanics as incorrectly using the term "tool".
+
 * **Event Listener Deduplication**: Do NOT flag event listener method names that deduplicate repeated words between outer and inner event classes (e.g., `onItemCanBreak` for `ItemBreakEvent.CanBreak` instead of `onItemBreakCanBreak`). Omitting redundant or repeated words across the class hierarchy is acceptable.
 
 * **Event Listener Method Naming**: Do NOT include `Event` in event listener method names. Event listener method names must follow the Java class hierarchy from left to right:
