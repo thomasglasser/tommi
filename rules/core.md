@@ -2,7 +2,7 @@
 
 ## 1. Naming & Terminology
 * **Descriptive & Action-Oriented**: Avoid vague names (`null`, `trigger`, `commander`, `d`, `a`, `g`). Use explicit, action-oriented names (e.g., `enqueueTransformation` instead of `transform`, `normalizeDegreesBetween180` instead of `normalizeDegrees`).
-* **No Abbreviations**: Do NOT abbreviate variable names (e.g., avoid `MLB` for Miraculous Ladybug, or `ent` for `entity`). Use the full word.
+* **No Cryptic Abbreviations**: Do NOT use arbitrary or cryptic abbreviations for domain concepts or variables (e.g., avoid `MLB` for Miraculous Ladybug, or `ent` for `entity`). Use clear, descriptive names. However, standard, universally recognized Minecraft and mathematical abbreviations (such as `pos` for position, `rot` for rotation, `dist` for distance, `prev` for previous, and `curr` for current) are allowed.
 * **American English Spelling & Grammar**: ALWAYS follow American English spelling and grammar across all code identifiers, variable names, method names, class names, comments, and Javadocs (e.g., use `color` instead of `colour`, `synchronize` instead of `synchronise`, `behavior` instead of `behaviour`, `canceled` instead of `cancelled`, `center` instead of `centre`, `program` instead of `programme`).
 * **Java Naming Conventions**: Strictly follow standard Java conventions (camelCase methods/variables, PascalCase types).
 * **Constant Naming**: `public static final` (PSF) fields MUST use `CAPITAL_SNAKE_CASE`.
