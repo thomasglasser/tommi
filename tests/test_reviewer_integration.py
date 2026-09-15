@@ -1109,5 +1109,151 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class TestFetchPrDiffFallback(unittest.TestCase):
+    """Tests for the 406 diff-too-large -> paginated /files fallback."""
+
+    def _make_reviewer(self):
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto",
+        )
+        return TommiReviewer(config)
+
+    @patch("src.reviewer.requests.get")
+    def test_fetch_pr_diff_success(self, mock_get):
+        """Normal 200 path returns the diff text directly."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "diff --git a/A.java b/A.java\n+int x = 1;\n"
+        mock_get.return_value = mock_resp
+
+        reviewer = self._make_reviewer()
+        diff = reviewer.fetch_pr_diff("https://api.github.com/repos/test/repo/pulls/1")
+        self.assertIn("A.java", diff)
+        mock_get.assert_called_once()
+
+    @patch("src.reviewer.requests.get")
+    def test_fetch_pr_diff_406_falls_back_to_files(self, mock_get):
+        """When the diff endpoint returns 406, assembles diff from /files patches."""
+        # First call: 406 from the diff endpoint
+        resp_406 = MagicMock()
+        resp_406.status_code = 406
+        resp_406.text = '{"message":"diff too large"}'
+
+        # Second call: paginated /files page 1 (fewer than 100 entries = last page)
+        resp_files = MagicMock()
+        resp_files.status_code = 200
+        resp_files.json.return_value = [
+            {
+                "filename": "src/Foo.java",
+                "status": "modified",
+                "patch": "@@ -1,3 +1,4 @@\n public class Foo {\n+    int x = 1;\n }",
+            },
+            {
+                "filename": "assets/icon.png",
+                "status": "modified",
+                "patch": None,  # Binary — should be skipped
+            },
+            {
+                "filename": "src/Bar.java",
+                "status": "added",
+                "patch": "@@ -0,0 +1,2 @@\n+public class Bar {}",
+            },
+        ]
+        mock_get.side_effect = [resp_406, resp_files]
+
+        reviewer = self._make_reviewer()
+        diff = reviewer.fetch_pr_diff("https://api.github.com/repos/test/repo/pulls/1")
+
+        # Both Java files should appear, PNG should be absent
+        self.assertIn("diff --git a/src/Foo.java b/src/Foo.java", diff)
+        self.assertIn("diff --git a/src/Bar.java b/src/Bar.java", diff)
+        self.assertNotIn("icon.png", diff)
+
+        # Added file should use /dev/null as the --- header
+        self.assertIn("--- /dev/null", diff)
+        self.assertIn("+++ b/src/Bar.java", diff)
+
+        # /files should have been called once (only 3 entries < 100, so single page)
+        self.assertEqual(mock_get.call_count, 2)
+
+    @patch("src.reviewer.requests.get")
+    def test_fetch_pr_diff_406_paginates_files(self, mock_get):
+        """Pagination: fetches subsequent pages until fewer than 100 entries returned."""
+        resp_406 = MagicMock()
+        resp_406.status_code = 406
+        resp_406.text = '{"message":"diff too large"}'
+
+        # Page 1: exactly 100 entries
+        page1_entries = [
+            {"filename": f"src/File{i}.java", "status": "modified",
+             "patch": f"@@ -1,1 +1,2 @@\n+int x{i} = {i};"}
+            for i in range(100)
+        ]
+        resp_page1 = MagicMock()
+        resp_page1.status_code = 200
+        resp_page1.json.return_value = page1_entries
+
+        # Page 2: 2 entries (< 100 → last page)
+        page2_entries = [
+            {"filename": "src/Extra.java", "status": "modified",
+             "patch": "@@ -1,1 +1,2 @@\n+int extra = 1;"},
+        ]
+        resp_page2 = MagicMock()
+        resp_page2.status_code = 200
+        resp_page2.json.return_value = page2_entries
+
+        mock_get.side_effect = [resp_406, resp_page1, resp_page2]
+
+        reviewer = self._make_reviewer()
+        diff = reviewer.fetch_pr_diff("https://api.github.com/repos/test/repo/pulls/1")
+
+        self.assertIn("src/File0.java", diff)
+        self.assertIn("src/File99.java", diff)
+        self.assertIn("src/Extra.java", diff)
+        # 1 (diff endpoint) + 2 (files pages) = 3 total requests
+        self.assertEqual(mock_get.call_count, 3)
+
+    @patch("src.reviewer.requests.get")
+    def test_fetch_pr_diff_non_406_error_raises(self, mock_get):
+        """Non-406 error status codes still raise RuntimeError immediately."""
+        resp_500 = MagicMock()
+        resp_500.status_code = 500
+        resp_500.text = "Internal Server Error"
+        mock_get.return_value = resp_500
+
+        reviewer = self._make_reviewer()
+        with self.assertRaises(RuntimeError) as ctx:
+            reviewer.fetch_pr_diff("https://api.github.com/repos/test/repo/pulls/1")
+        self.assertIn("HTTP 500", str(ctx.exception))
+
+    @patch("src.reviewer.requests.get")
+    def test_fetch_pr_diff_renamed_file_uses_previous_filename(self, mock_get):
+        """Renamed files use previous_filename in the --- a/ header."""
+        resp_406 = MagicMock()
+        resp_406.status_code = 406
+        resp_406.text = '{"message":"diff too large"}'
+
+        resp_files = MagicMock()
+        resp_files.status_code = 200
+        resp_files.json.return_value = [
+            {
+                "filename": "src/NewName.java",
+                "previous_filename": "src/OldName.java",
+                "status": "renamed",
+                "patch": "@@ -1,1 +1,1 @@\n public class NewName {}",
+            }
+        ]
+        mock_get.side_effect = [resp_406, resp_files]
+
+        reviewer = self._make_reviewer()
+        diff = reviewer.fetch_pr_diff("https://api.github.com/repos/test/repo/pulls/1")
+
+        self.assertIn("diff --git a/src/OldName.java b/src/NewName.java", diff)
+        self.assertIn("--- a/src/OldName.java", diff)
+        self.assertIn("+++ b/src/NewName.java", diff)
 
 

@@ -75,7 +75,12 @@ class TommiReviewer:
         self.unreviewed_files: List[str] = []
 
     def fetch_pr_diff(self, pr_url: str) -> str:
-        """Fetches the raw diff of the PR using GitHub API."""
+        """
+        Fetches the raw unified diff of the PR using GitHub API.
+
+        Falls back to assembling the diff from the paginated /pulls/{n}/files endpoint
+        when GitHub returns HTTP 406 (diff too large, exceeds 20 000 lines).
+        """
         headers = {
             "Accept": "application/vnd.github.v3.diff",
         }
@@ -83,9 +88,86 @@ class TommiReviewer:
             headers["Authorization"] = f"Bearer {self.auth_token}"
 
         resp = requests.get(pr_url, headers=headers)
-        if resp.status_code != 200:
-            raise RuntimeError(f"Failed to fetch PR diff (HTTP {resp.status_code}): {resp.text}")
-        return resp.text
+        if resp.status_code == 200:
+            return resp.text
+
+        if resp.status_code == 406:
+            # Diff too large for the single-endpoint response — assemble from file patches.
+            logger.warning(
+                f"PR diff endpoint returned 406 (diff too large). "
+                f"Falling back to paginated /files endpoint to assemble diff..."
+            )
+            return self._fetch_pr_diff_from_files(pr_url)
+
+        raise RuntimeError(f"Failed to fetch PR diff (HTTP {resp.status_code}): {resp.text}")
+
+    def _fetch_pr_diff_from_files(self, pr_url: str) -> str:
+        """
+        Assembles a unified-diff-compatible string by collecting the `patch` field
+        from each file returned by the paginated GET /pulls/{n}/files endpoint.
+
+        GitHub paginates at 30 files per page (max 100 with ?per_page=100).
+        Files without a `patch` (e.g. binary files or files too large to patch) are skipped.
+        """
+        json_headers = {
+            "Accept": "application/vnd.github.v3+json",
+        }
+        if self.auth_token:
+            json_headers["Authorization"] = f"Bearer {self.auth_token}"
+
+        # The files endpoint is at the same base URL + /files
+        files_url = pr_url.rstrip("/") + "/files"
+        diff_chunks: List[str] = []
+        page = 1
+
+        while True:
+            resp = requests.get(files_url, headers=json_headers, params={"per_page": 100, "page": page})
+            if resp.status_code != 200:
+                raise RuntimeError(
+                    f"Failed to fetch PR files page {page} (HTTP {resp.status_code}): {resp.text}"
+                )
+
+            file_entries = resp.json()
+            if not file_entries:
+                break  # No more pages
+
+            for entry in file_entries:
+                filename = entry.get("filename", "")
+                previous_filename = entry.get("previous_filename", filename)
+                patch = entry.get("patch")  # May be absent for binary / oversized files
+                status = entry.get("status", "modified")  # added, removed, modified, renamed
+
+                if not patch:
+                    # Binary or per-file-too-large — no reviewable content
+                    continue
+
+                # Reconstruct a minimal diff header so parse_unified_diff can handle it
+                if status == "renamed":
+                    header = f"diff --git a/{previous_filename} b/{filename}\n"
+                    header += f"--- a/{previous_filename}\n"
+                else:
+                    header = f"diff --git a/{filename} b/{filename}\n"
+                    if status == "added":
+                        header += f"--- /dev/null\n"
+                    else:
+                        header += f"--- a/{filename}\n"
+
+                header += f"+++ b/{filename}\n"
+                diff_chunks.append(header + patch)
+
+            # If fewer than 100 results came back, we've hit the last page
+            if len(file_entries) < 100:
+                break
+
+            page += 1
+
+        assembled = "\n".join(diff_chunks)
+        logger.info(
+            f"Assembled diff from {len(diff_chunks)} file patch(es) via paginated /files endpoint "
+            f"({len(assembled)} chars total)."
+        )
+        return assembled
+
 
     def _parse_and_repair_json(self, raw_text: str) -> List[Dict[str, Any]]:
         """
