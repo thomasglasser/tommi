@@ -30,7 +30,6 @@
 * **Logical Ordering**:
   * ALWAYS group related items logically and consistently.
 * **Class Layout**:
-  * **Public before Private**: Public methods and constructors MUST be placed above private ones.
   * **Inner Classes, Records & Enums**: MUST be placed below all methods at the very bottom of the class.
   * **Variable Placement**: Declare variables right above where they are used, rather than at the top of a method.
 * **Control Flow**:

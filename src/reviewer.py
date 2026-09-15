@@ -671,6 +671,8 @@ class TommiReviewer:
         last_error = None
         failed_batches: List[Tuple[int, str, ParsedDiff]] = []
 
+        consecutive_all_model_failures = 0
+
         # === PASS 1: Sequential review across all diff batches ===
         for b_idx, batch_diff in enumerate(diff_batches):
             if len(diff_batches) > 1:
@@ -702,14 +704,48 @@ class TommiReviewer:
                 successful_batches_count += 1
                 preferred_model = succ_model
                 all_comments_data.extend(comments)
+                consecutive_all_model_failures = 0
             else:
+                consecutive_all_model_failures += 1
+
+                # Early exit if the very first batch fails across all candidate models:
+                # The API is completely unavailable or quota is exhausted before starting.
+                if b_idx == 0:
+                    logger.warning(
+                        "Batch 1 failed across all candidate models. "
+                        "Aborting review immediately to prevent long timeouts and quota exhaustion."
+                    )
+                    if is_429 or last_encountered_429:
+                        raise QuotaExceededException("T.O.M.M.I. has run out of AI API quota / rate limit. Please try again later.")
+                    elif is_503 or last_encountered_503:
+                        raise HighDemandException("T.O.M.M.I. is currently experiencing high demand. Please try again in a few moments.")
+                    elif err or last_error:
+                        raise RuntimeError(f"Failed to generate or parse AI review response on Batch 1: {err or last_error}")
+                    raise RuntimeError("Failed to obtain response from Gemini API on Batch 1.")
+
                 failed_batches.append((b_idx, batch_diff, batch_parsed_diff))
+
+                # If 2 consecutive batches fail across all candidate models mid-review,
+                # the API is experiencing a persistent outage. Stop Pass 1 and return partial findings.
+                if consecutive_all_model_failures >= 2 and successful_batches_count > 0:
+                    logger.warning(
+                        f"Encountered {consecutive_all_model_failures} consecutive batch failures across all candidate models. "
+                        f"Aborting remaining batches early to return partial review findings."
+                    )
+                    for _, _, f_parsed in failed_batches:
+                        self.unreviewed_files.extend(list(f_parsed.files.keys()))
+                    failed_batches.clear()
+                    for rem_idx in range(b_idx + 1, len(diff_batches)):
+                        rem_diff = diff_batches[rem_idx]
+                        rem_parsed = parse_unified_diff(rem_diff)
+                        self.unreviewed_files.extend(list(rem_parsed.files.keys()))
+                    break
 
             if b_idx < len(diff_batches) - 1:
                 time.sleep(3)
 
         # === PASS 2: Rerun any failed batches after cooldown ===
-        if failed_batches:
+        if failed_batches and successful_batches_count > 0 and consecutive_all_model_failures < 2:
             logger.info(
                 f"Pass 1 completed with {len(failed_batches)} failed batch(es). "
                 f"Attempting second pass to achieve full review coverage..."
@@ -727,7 +763,7 @@ class TommiReviewer:
             else:
                 time.sleep(3)
 
-            for b_idx, batch_diff, batch_parsed_diff in failed_batches:
+            for p2_i, (b_idx, batch_diff, batch_parsed_diff) in enumerate(failed_batches):
                 logger.info(f"--- Retrying failed PR diff batch {b_idx + 1}/{len(diff_batches)} (Pass 2) ---")
                 comments, succ_model, is_429, is_503, err = self._review_batch(
                     batch_diff=batch_diff,
@@ -761,6 +797,13 @@ class TommiReviewer:
                         f"Batch {b_idx + 1}/{len(diff_batches)} failed on retry pass ({len(batch_files)} files skipped: {batch_files})."
                     )
                     self.unreviewed_files.extend(batch_files)
+
+                    # Circuit Breaker on Pass 2: If a batch fails on retry pass across all candidate models,
+                    # mark remaining retry batches as unreviewed and break immediately to avoid repeated 30-50s cooldowns.
+                    for _, _, rem_p in failed_batches[p2_i + 1:]:
+                        self.unreviewed_files.extend(list(rem_p.files.keys()))
+                    logger.warning("Breaking out of Pass 2 early to prevent excessive timeouts on exhausted models.")
+                    break
 
                 time.sleep(2)
 

@@ -1104,6 +1104,101 @@ index 1111111..2222222 100644
             # Zero unreviewed files because Pass 2 recovered Batch 2!
             self.assertEqual(reviewer.unreviewed_files, [])
 
+    @patch("src.reviewer.time.sleep")
+    @patch("src.reviewer.requests.get")
+    def test_review_pr_aborts_immediately_on_batch_1_all_model_failure(self, mock_requests_get, mock_sleep):
+        """
+        Verifies that if Batch 1 fails across all candidate models (e.g. 503 high demand),
+        review_pr aborts immediately without trying Batch 2, Batch 3, or running Pass 2.
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "diff --git a/src/File1.java b/src/File1.java\n+ int a = 1;\n"
+        mock_requests_get.return_value = mock_resp
+
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto"
+        )
+
+        with patch("src.reviewer.split_diff_into_batches") as mock_split, \
+             patch("src.reviewer.genai.Client") as mock_client_cls, \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.8-flash"]):
+            mock_split.return_value = [
+                "diff --git a/src/File1.java b/src/File1.java\n+ int a = 1;\n",
+                "diff --git a/src/File2.java b/src/File2.java\n+ int b = 2;\n",
+                "diff --git a/src/File3.java b/src/File3.java\n+ int c = 3;\n",
+            ]
+
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            # Batch 1 fails with 503 on both attempts
+            demand_err = Exception("503 UNAVAILABLE: high demand")
+            mock_client.models.generate_content.side_effect = [demand_err, demand_err]
+
+            from src.reviewer import HighDemandException
+            reviewer = TommiReviewer(config)
+            with self.assertRaises(HighDemandException):
+                reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+
+            # Must have aborted after Batch 1 (only 2 calls for Batch 1 attempts, never tried Batch 2 or 3)
+            self.assertEqual(mock_client.models.generate_content.call_count, 2)
+
+    @patch("src.reviewer.time.sleep")
+    @patch("src.reviewer.requests.get")
+    def test_review_pr_mid_review_consecutive_failures_returns_partial_findings(self, mock_requests_get, mock_sleep):
+        """
+        Verifies that if Batch 1 succeeds, but subsequent batches encounter persistent failures,
+        it cuts review short, returns Batch 1 findings, and marks the remaining files unreviewed.
+        """
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "diff --git a/src/File1.java b/src/File1.java\n+ int a = 1;\n"
+        mock_requests_get.return_value = mock_resp
+
+        config = TommiConfig(
+            github_token="ghp_fake",
+            gemini_api_key="fake_key",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto"
+        )
+
+        with patch("src.reviewer.split_diff_into_batches") as mock_split, \
+             patch("src.reviewer.genai.Client") as mock_client_cls, \
+             patch("src.reviewer.resolve_candidate_models", return_value=["gemini-3.8-flash"]):
+            mock_split.return_value = [
+                "diff --git a/src/File1.java b/src/File1.java\n--- a/src/File1.java\n+++ b/src/File1.java\n@@ -1,1 +1,2 @@\n+ int a = 1;\n",
+                "diff --git a/src/File2.java b/src/File2.java\n--- a/src/File2.java\n+++ b/src/File2.java\n@@ -1,1 +1,2 @@\n+ int b = 2;\n",
+                "diff --git a/src/File3.java b/src/File3.java\n--- a/src/File3.java\n+++ b/src/File3.java\n@@ -1,1 +1,2 @@\n+ int c = 3;\n",
+                "diff --git a/src/File4.java b/src/File4.java\n--- a/src/File4.java\n+++ b/src/File4.java\n@@ -1,1 +1,2 @@\n+ int d = 4;\n",
+            ]
+
+            mock_client = MagicMock()
+            mock_client_cls.return_value = mock_client
+
+            # Batch 1 succeeds
+            resp1 = MagicMock()
+            resp1.text = json.dumps([{"path": "src/File1.java", "line": 2, "body": "Issue 1", "severity": "WARNING"}])
+
+            # Batch 2 and 3 fail with 503
+            err = Exception("503 UNAVAILABLE: high demand")
+            mock_client.models.generate_content.side_effect = [resp1, err, err, err, err]
+
+            reviewer = TommiReviewer(config)
+            comments = reviewer.review_pr("Test PR", "Test description", "https://api.github.com/repos/test/repo/pulls/1")
+
+            self.assertEqual(len(comments), 1)
+            self.assertEqual(comments[0]["path"], "src/File1.java")
+            # Files 2, 3, and 4 should be in unreviewed_files
+            self.assertIn("src/File2.java", reviewer.unreviewed_files)
+            self.assertIn("src/File3.java", reviewer.unreviewed_files)
+            self.assertIn("src/File4.java", reviewer.unreviewed_files)
+
 
 if __name__ == "__main__":
     unittest.main()
