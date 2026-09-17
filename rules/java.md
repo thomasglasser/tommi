@@ -11,6 +11,8 @@
 
 ## 2. Language Features & APIs
 
+* **Single-Line Field Javadocs**: Do NOT flag `///` comments preceding field declarations as invalid syntax or require them to use block Javadoc syntax (`/** ... */`); `///` is valid and standard for all single-line Javadocs, including fields.
+
 * **Optional Unwrapping Shadowing**: Do NOT flag local variables that shadow an `Optional` field or parameter when storing the unwrapped value (e.g., `HolderSet<Kamikotization> kamikotizations = this.kamikotizations.get();`); unwrapping an `Optional` into a local variable of the same name is acceptable.
 
 * **Javadoc Scope**: Javadocs are NOT required on private members, private helper methods, or private inner classes/records. Do NOT suggest adding Javadocs to private members.
