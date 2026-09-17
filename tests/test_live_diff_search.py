@@ -312,6 +312,29 @@ class TestLiveDiffSearch(unittest.TestCase):
         """
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
+            env_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), ".env")
+            if os.path.exists(env_file):
+                try:
+                    with open(env_file, "r", encoding="utf-8") as f:
+                        for line in f:
+                            if line.startswith("GEMINI_API_KEY="):
+                                api_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                                os.environ["GEMINI_API_KEY"] = api_key
+                                break
+                except Exception:
+                    pass
+        if not api_key and os.name == "nt":
+            try:
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Environment") as key:
+                    val, _ = winreg.QueryValueEx(key, "GEMINI_API_KEY")
+                    if val:
+                        api_key = val
+                        os.environ["GEMINI_API_KEY"] = val
+            except Exception:
+                pass
+
+        if not api_key:
             self.skipTest("GEMINI_API_KEY not set in local environment (skipping live AI inference).")
 
         config = TommiConfig(gemini_api_key=api_key, github_repository="Mineraculous/Mineraculous", pr_number=87)
@@ -333,13 +356,24 @@ class TestLiveDiffSearch(unittest.TestCase):
         from src.rules_loader import load_all_rules
         all_rules = load_all_rules()
 
-        prompt = reviewer._build_review_prompt("Test PR", "Testing high reasoning", test_diff, all_rules, parsed_diff=parsed)
-        from src.models_resolver import resolve_model_name
-        model_to_use = resolve_model_name(reviewer.client, "auto")
-        response_text = reviewer._execute_review_generation(model_to_use, prompt, enable_tools=False)
-        self.assertIsNotNone(response_text)
-        comments = reviewer._parse_and_repair_json(response_text)
+        from src.models_resolver import resolve_candidate_models
+        candidate_models = resolve_candidate_models(reviewer.client, "auto")
+        comments, succ_model, is_429, is_503, err = reviewer._review_batch(
+            batch_diff=test_diff,
+            batch_parsed_diff=parsed,
+            b_idx=0,
+            total_batches=1,
+            pr_title="Test PR",
+            pr_body="Testing high reasoning",
+            rules=all_rules,
+            candidate_models=candidate_models,
+            model_cooldowns={},
+            preferred_model=None,
+            enable_tools=False,
+        )
+        self.assertIsNotNone(comments)
         self.assertIsInstance(comments, list)
+        self.assertTrue(len(comments) > 0)
 
 
 if __name__ == "__main__":
