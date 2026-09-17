@@ -58,6 +58,8 @@
 
 ## 4. Git & Review Etiquette
 
+* **No Meaningless or "No Changes Needed" Comments**: NEVER post review comments that conclude with "no action needed", "no further changes needed", "just noting", or purely praise/acknowledge acceptable patterns without requesting an actionable code change. Every review comment MUST propose a concrete, actionable improvement.
+
 * **Inspect Added Code Only**: When reviewing diff hunks, ALWAYS inspect and evaluate the newly added or modified lines (`+`), NEVER the removed or previous lines (`-`). Do NOT generate review comments, critique patterns, or suggest improvements based on obsolete code that was removed or replaced in the diff.
 
 * **Accurate Control Flow & Missing Returns**: NEVER claim execution continues past a statement or that a code branch is missing an early `return` or `break` (e.g., after `entity.discard()`, cleanup, or terminal calls) without thoroughly verifying the entire method body outside the diff hunk. Do NOT suggest redundant `return` statements when no further code executes in that branch or method.
