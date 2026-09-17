@@ -2,6 +2,8 @@
 
 ## 1. Tick Loops & High-Frequency Operations
 
+* **Behavior & Goal Constructor Lambdas**: Do NOT flag lambda closures or function allocations in AI behavior/goal constructors (e.g., `runFor(entity -> ...)` in `ExtendedBehaviour`) as prohibited allocations or stale closures; behaviors are constructed during entity/brain registration (not per-tick), and lambdas referencing instance fields capture the field reference dynamically on execution.
+
 * **BlockPos.MutableBlockPos**: ALWAYS use `BlockPos.MutableBlockPos` (or `BlockPos.betweenClosedStream` / mutable iterators) when iterating or scanning coordinates instead of allocating new `BlockPos` objects on every step. Do NOT suggest or rename `BlockPos.MutableBlockPos` to non-existent class names like `BlockPos.Mutable`.
 
 * **Spline & Particle Operations in Ticks**: Do NOT flag client-side particle spawning or standard spline entity calculations (e.g., target distance queries, segment tracking, facing direction updates) as prohibited tick allocations or performance violations without verifying that new heap objects are actually being allocated.
