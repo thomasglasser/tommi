@@ -58,12 +58,10 @@
 
 ## 4. Git & Review Etiquette
 
+* **No Meaningless or "No Changes Needed" Comments**: NEVER post review comments that conclude with "no action needed", "no further changes needed", "just noting", or purely praise/acknowledge acceptable patterns without requesting an actionable code change. Every review comment MUST propose a concrete, actionable improvement.
 * **PR Description Not Source of Truth for Translations/Grammar**: Do NOT treat the PR description as the authoritative source of truth for code, UI labels, or localization terminology. NEVER suggest changing grammatically correct or intentional terms (such as "Distrust" vs. "Untrust") solely to match phrasing used in the PR description.
-
 * **Inspect Added Code Only**: When reviewing diff hunks, ALWAYS inspect and evaluate the newly added or modified lines (`+`), NEVER the removed or previous lines (`-`). Do NOT generate review comments, critique patterns, or suggest improvements based on obsolete code that was removed or replaced in the diff.
-
 * **Accurate Control Flow & Missing Returns**: NEVER claim execution continues past a statement or that a code branch is missing an early `return` or `break` (e.g., after `entity.discard()`, cleanup, or terminal calls) without thoroughly verifying the entire method body outside the diff hunk. Do NOT suggest redundant `return` statements when no further code executes in that branch or method.
-
 * **Accurate Invocation & Member Usage Checks**: NEVER claim a method, field, or helper is unused, never invoked, or missing from execution paths without thoroughly verifying the entire file and class, including unchanged lines outside the diff hunk. Do NOT assert that a method is never called or suggest adding invocations without confirming it is genuinely absent everywhere.
 * **Pay Attention to IDE Warnings**: Never ignore yellow/red IDE warnings (e.g., comparing `ResourceKey` to `ResourceLocation`).
 * **Self-Review**: Contributors MUST review their own PR diff before requesting review.
