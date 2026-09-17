@@ -334,7 +334,9 @@ class TestLiveDiffSearch(unittest.TestCase):
         all_rules = load_all_rules()
 
         prompt = reviewer._build_review_prompt("Test PR", "Testing high reasoning", test_diff, all_rules, parsed_diff=parsed)
-        response_text = reviewer._execute_review_generation("gemini-2.5-flash", prompt, enable_tools=False)
+        from src.models_resolver import resolve_model_name
+        model_to_use = resolve_model_name(reviewer.client, "auto")
+        response_text = reviewer._execute_review_generation(model_to_use, prompt, enable_tools=False)
         self.assertIsNotNone(response_text)
         comments = reviewer._parse_and_repair_json(response_text)
         self.assertIsInstance(comments, list)

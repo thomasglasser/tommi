@@ -2,18 +2,23 @@ name: T.O.M.M.I. AI Code Reviewer
 
 on:
   issue_comment:
-    types: [created]
+    types: [created, edited]
   pull_request_review_comment:
-    types: [created]
+    types: [created, edited]
+  pull_request_review:
+    types: [submitted, edited]
   pull_request:
     types: [closed]
 
 jobs:
   tommi:
-    # Trigger on comments containing /tommi OR when a PR is merged
+    # Trigger on human comments/reviews containing /tommi, @tommi, or @t-o-m-m-i-ai-reviewer OR when a PR is merged
     if: |
       (github.event_name == 'pull_request' && github.event.pull_request.merged == true) ||
-      (contains(github.event.comment.body, '/tommi'))
+      ((github.event.comment.user.type != 'Bot' && github.event.review.user.type != 'Bot' && !endsWith(github.actor, '[bot]')) &&
+       (contains(github.event.comment.body, '/tommi') || contains(github.event.review.body, '/tommi') ||
+        contains(github.event.comment.body, '@tommi') || contains(github.event.review.body, '@tommi') ||
+        contains(github.event.comment.body, '@t-o-m-m-i-ai-reviewer') || contains(github.event.review.body, '@t-o-m-m-i-ai-reviewer')))
     runs-on: ubuntu-latest
     permissions:
       contents: write
