@@ -58,6 +58,8 @@
 
 ## 4. Git & Review Etiquette
 
+* **PR Description Not Source of Truth for Translations/Grammar**: Do NOT treat the PR description as the authoritative source of truth for code, UI labels, or localization terminology. NEVER suggest changing grammatically correct or intentional terms (such as "Distrust" vs. "Untrust") solely to match phrasing used in the PR description.
+
 * **Inspect Added Code Only**: When reviewing diff hunks, ALWAYS inspect and evaluate the newly added or modified lines (`+`), NEVER the removed or previous lines (`-`). Do NOT generate review comments, critique patterns, or suggest improvements based on obsolete code that was removed or replaced in the diff.
 
 * **Accurate Control Flow & Missing Returns**: NEVER claim execution continues past a statement or that a code branch is missing an early `return` or `break` (e.g., after `entity.discard()`, cleanup, or terminal calls) without thoroughly verifying the entire method body outside the diff hunk. Do NOT suggest redundant `return` statements when no further code executes in that branch or method.
