@@ -407,7 +407,7 @@ Thomas has provided review feedback / correction on a Pull Request.
         """
         Uses Gemini to cleanly refactor and integrate a new or updated rule into the existing markdown document,
         merging with existing bullet points where applicable and eliminating duplicate or contradictory statements.
-        Falls back to safe section insertion if model synthesis fails or truncates.
+        Aborts with an error if model synthesis fails or truncates, preventing messy unvetted heading-append pollution.
         """
         rule_markdown = plan.get("rule_markdown", "").strip()
         section_header = plan.get("section_header", "")
@@ -454,22 +454,15 @@ Cleanly integrate the following rule update into the rule document `{target_file
                 return refactored.rstrip() + "\n"
             else:
                 logger.warning(
-                    f"Refactored document failed safety validation (len={len(refactored)} vs orig={len(current_text)}). "
-                    f"Falling back to direct section insertion."
+                    f"Refactored document failed safety validation (len={len(refactored)} vs orig={len(current_text)})."
                 )
+                raise ValueError("Synthesized rule document failed safety validation (possible truncation or missing headers).")
         except Exception as e:
-            logger.warning(f"Failed to refactor rule document with Gemini ({e}). Falling back to direct section insertion.")
-
-        # Fallback: clean section insertion
-        if section_header and section_header in current_text:
-            idx = current_text.find(section_header) + len(section_header)
-            next_newline = current_text.find("\n", idx)
-            if next_newline != -1:
-                return current_text[:next_newline + 1] + f"\n{rule_markdown}\n" + current_text[next_newline + 1:]
-            else:
-                return current_text + f"\n\n{rule_markdown}\n"
-        else:
-            return current_text.rstrip() + f"\n\n{rule_markdown}\n"
+            logger.error(f"Failed to cleanly synthesize and refactor rule document with Gemini: {e}")
+            raise RuntimeError(
+                f"Could not cleanly refactor and integrate rule into '{target_file_path}'. "
+                f"Aborting update to prevent messy unformatted appends: {e}"
+            ) from e
 
     def _create_rule_pr(self, plan: Dict[str, Any], raw_feedback: str) -> str:
         """

@@ -148,7 +148,7 @@ class TestLearnerIntegration(unittest.TestCase):
             updated = learner._refactor_and_integrate_rule(current_doc, "rules/core.md", plan)
             self.assertEqual(updated, refactored_doc)
 
-    def test_refactor_and_integrate_rule_fallback_on_failure(self):
+    def test_refactor_and_integrate_rule_aborts_on_failure(self):
         config = TommiConfig(github_token="fake", gemini_api_key="fake", github_repository="test/repo", pr_number=1)
         learner = TommiLearner(config=config, github_client=MagicMock())
 
@@ -162,10 +162,9 @@ class TestLearnerIntegration(unittest.TestCase):
         }
 
         with patch.object(learner, "_generate_content_with_fallback", side_effect=Exception("API Error")):
-            updated = learner._refactor_and_integrate_rule(current_doc, "rules/core.md", plan)
-            self.assertIn("* **New Rule**: Use clear names.", updated)
-            self.assertIn("* **Old Rule**: Don't use bad names.", updated)
+            with self.assertRaises(RuntimeError) as ctx:
+                learner._refactor_and_integrate_rule(current_doc, "rules/core.md", plan)
+            self.assertIn("Could not cleanly refactor and integrate rule", str(ctx.exception))
 
 if __name__ == "__main__":
     unittest.main()
-
