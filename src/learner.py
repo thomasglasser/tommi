@@ -78,7 +78,7 @@ class TommiLearner:
 
         return response.text.strip() if hasattr(response, "text") and response.text else ""
 
-    def _generate_content_with_fallback(self, prompt: str) -> str:
+    def _generate_content_with_fallback(self, prompt: str, response_mime_type: str = "application/json") -> str:
         """Executes content generation, trying candidate models with backoff on 503/429 before failing."""
         candidate_models = resolve_candidate_models(self.client, self.config.model_name)
         response = None
@@ -93,7 +93,7 @@ class TommiLearner:
                 try:
                     gen_config = types.GenerateContentConfig(
                         temperature=0.1,
-                        response_mime_type="application/json",
+                        response_mime_type=response_mime_type,
                         max_output_tokens=65536,
                         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
                     )
@@ -403,6 +403,74 @@ Thomas has provided review feedback / correction on a Pull Request.
             "pr_url": pr_url
         }
 
+    def _refactor_and_integrate_rule(self, current_text: str, target_file_path: str, plan: Dict[str, Any]) -> str:
+        """
+        Uses Gemini to cleanly refactor and integrate a new or updated rule into the existing markdown document,
+        merging with existing bullet points where applicable and eliminating duplicate or contradictory statements.
+        Falls back to safe section insertion if model synthesis fails or truncates.
+        """
+        rule_markdown = plan.get("rule_markdown", "").strip()
+        section_header = plan.get("section_header", "")
+        summary = plan.get("summary", "")
+        rationale = plan.get("rationale", "")
+
+        prompt = f"""You are an expert technical editor maintaining rule documentation for T.O.M.M.I. (an automated code reviewer).
+Cleanly integrate the following rule update into the rule document `{target_file_path}`.
+
+### CURRENT COMPLETE DOCUMENT CONTENT:
+```markdown
+{current_text}
+```
+
+### NEW RULE TO INTEGRATE:
+- Target Section: {section_header}
+- Proposed Rule Text: {rule_markdown}
+- Summary of Change: {summary}
+- Rationale: {rationale}
+
+### INSTRUCTIONS:
+1. Integrate the rule cleanly into `{target_file_path}`.
+2. If an existing bullet point in that section already covers or addresses this topic, MERGE, REFINE, or EXPAND that bullet point in place instead of creating a duplicate bullet point.
+3. If it is a new rule, place it in the most logical position within the section.
+4. Remove any duplicate bullet points, contradictions, or erratic formatting in that section.
+5. Preserve all existing markdown formatting, titles, headers, and strict imperative style (**MUST**, **NEVER**, **ALWAYS**).
+6. Return ONLY the complete updated raw markdown document text. Do not wrap in backticks or markdown fences, and do not add conversational preamble.
+"""
+        try:
+            raw_response = self._generate_content_with_fallback(prompt, response_mime_type="text/plain")
+            refactored = self._extract_response_text(raw_response) if hasattr(raw_response, "candidates") else str(raw_response).strip()
+
+            # Strip code fences if the model still wrapped them
+            if refactored.startswith("```markdown"):
+                refactored = refactored[11:].strip()
+            elif refactored.startswith("```"):
+                refactored = refactored[3:].strip()
+            if refactored.endswith("```"):
+                refactored = refactored[:-3].strip()
+
+            # Safety check: ensure response is substantive and didn't hallucinate or truncate
+            if len(refactored) >= len(current_text) * 0.6 and ("# " in refactored or "## " in refactored):
+                logger.info(f"Successfully synthesized clean, refactored rule document for '{target_file_path}'.")
+                return refactored.rstrip() + "\n"
+            else:
+                logger.warning(
+                    f"Refactored document failed safety validation (len={len(refactored)} vs orig={len(current_text)}). "
+                    f"Falling back to direct section insertion."
+                )
+        except Exception as e:
+            logger.warning(f"Failed to refactor rule document with Gemini ({e}). Falling back to direct section insertion.")
+
+        # Fallback: clean section insertion
+        if section_header and section_header in current_text:
+            idx = current_text.find(section_header) + len(section_header)
+            next_newline = current_text.find("\n", idx)
+            if next_newline != -1:
+                return current_text[:next_newline + 1] + f"\n{rule_markdown}\n" + current_text[next_newline + 1:]
+            else:
+                return current_text + f"\n\n{rule_markdown}\n"
+        else:
+            return current_text.rstrip() + f"\n\n{rule_markdown}\n"
+
     def _create_rule_pr(self, plan: Dict[str, Any], raw_feedback: str) -> str:
         """
         Creates a new branch and Pull Request on the central TOMMI repository.
@@ -439,18 +507,9 @@ Thomas has provided review feedback / correction on a Pull Request.
             current_text = f"# {target_file_path}\n\n"
             file_sha = None
 
-        # Append or insert rule
-        section_header = plan.get("section_header")
-        if section_header and section_header in current_text:
-            idx = current_text.find(section_header) + len(section_header)
-            # Find next line
-            next_newline = current_text.find("\n", idx)
-            if next_newline != -1:
-                updated_text = current_text[:next_newline + 1] + f"\n{rule_markdown}\n" + current_text[next_newline + 1:]
-            else:
-                updated_text = current_text + f"\n\n{rule_markdown}\n"
-        else:
-            updated_text = current_text.rstrip() + f"\n\n{rule_markdown}\n"
+        # Cleanly refactor and integrate rule into current_text
+        updated_text = self._refactor_and_integrate_rule(current_text, target_file_path, plan)
+
 
         commit_msg = f"learn: {summary}"
         if file_sha:

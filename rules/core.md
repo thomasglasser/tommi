@@ -9,55 +9,37 @@
 * **Pluralization**: Be accurate with plurals (e.g., `miraculouses`, `options` instead of `option` for collections).
 
 ## 2. Layout & Structure
-
-* **Private Method Placement**: Do NOT flag private methods as misplaced when they are positioned either at the bottom of the class (above inner classes, records, and enums) or directly below the public or protected methods that use them.
-
-* **Sequential Fallback Checks**: Do NOT suggest converting sequential `if` fallback assignments (e.g., `if (x == null) x = ...; if (x == null) x = ...;`) into `else if` chains; sequential execution is required to check whether previous fallback assignments evaluated to `null`.
-
-* **Inner Classes, Records & Enums Positioning**: Do NOT flag inner classes, records, or enums as violating class layout rules when they are properly declared at the very bottom of the class, even if fields or methods higher up reference them.
-
-* **Single-Statement Braces**: Omit curly braces (`{}`) for single-statement blocks (e.g., single-line `if`, `for`, `while`, or early `return`). However, the body statement MUST NOT be placed on the same line as the control statement; ALWAYS place it indented on a separate line.
-
-* **Static Factory & Builder Placement**:
-  * Static builder accessors (e.g., `builder()`) may be placed directly above the nested builder class/record definition.
-  * Static factory/constructing helpers (e.g., `of(...)`, `perching(...)`, `create(...)`) MUST be placed directly below the constructors and before instance methods.
-
-* **Method Organization**: Keep method placement clean and navigable. Do NOT strictly enforce visibility order (e.g. public before private); helper, protected, or private methods may be placed directly below where they are used or organized logically for readability.
-
-* **Compound Condition Branching**: Do NOT flag condition checks in `else` or `else if` branches as redundant when the preceding `if` statement uses a compound boolean condition (e.g., `&&` or `||`); entering the `else` branch only implies that the overall condition evaluated to false, not which specific sub-condition failed.
-
+* **Class Layout & Member Sequence**:
+  * **Static Constants & Fields**: Top of the class. `public static final` (PSF) fields MUST use `CAPITAL_SNAKE_CASE`.
+  * **Constructors**: Placed directly below fields.
+  * **Static Factory & Helper Methods**: Static constructing helpers (e.g., `of(...)`, `perching(...)`, `create(...)`) MUST be placed directly below constructors and before instance methods. Static `builder()` accessors may be placed directly above the nested builder class/record definition.
+  * **Instance & Helper Methods**: Keep method organization clean and navigable. Do NOT strictly enforce visibility order (e.g. public before private); helper, protected, or private methods may be placed directly below the methods that use them or at the bottom of the method section.
+  * **Inner Classes, Records & Enums**: MUST be placed at the very bottom of the class below all methods. Do NOT flag inner classes, records, or enums as misplaced when declared at the bottom, even if referenced higher up.
 * **Local Classes in Methods**: Do NOT flag local classes declared inside methods when used for lambda workarounds or local context as misplaced inner classes.
-* **Logical Ordering**:
-  * ALWAYS group related items logically and consistently.
-* **Class Layout**:
-  * **Inner Classes, Records & Enums**: MUST be placed below all methods at the very bottom of the class.
-  * **Variable Placement**: Declare variables right above where they are used, rather than at the top of a method.
-* **Control Flow**:
-  * Use `else if` chains rather than isolated `if` statements when branching on the same condition.
+* **Variable Placement**: Declare variables right above where they are used, rather than at the top of a method.
+* **Single-Statement Braces**: Omit curly braces (`{}`) for single-statement blocks (e.g., single-line `if`, `for`, `while`, or early `return`). The body statement MUST NOT be placed on the same line as the control statement; ALWAYS place it indented on a separate line. When wrapping multi-line nested `if/else` control flow, retain outer braces to eliminate dangling-else ambiguity.
+* **Control Flow & Branching**:
   * Combine boolean conditions with `&&` and `||` wherever possible to avoid unnecessary nested `if` statements.
+  * Use `else if` chains rather than isolated `if` statements when branching on the same condition.
+  * **Sequential Fallback Checks**: Do NOT suggest converting sequential `if` fallback assignments (e.g., `if (x == null) x = ...; if (x == null) x = ...;`) into `else if` chains; sequential execution is required to evaluate previous fallback assignments.
+  * **Compound Condition Branching**: Do NOT flag condition checks in `else` or `else if` branches as redundant when the preceding `if` statement uses a compound boolean condition (`&&` or `||`); entering the `else` branch only implies the overall condition evaluated to false, not which specific sub-condition failed.
 * **Spacing**: Avoid unnecessary blank lines. Keep closely related logic tightly grouped.
 
 ## 3. Code Cleanliness & DRY
-
-* **Nested & Inner Class References**: Do NOT flag referencing inner classes, records, or enums via their top-level outer class (e.g., `OuterClass.InnerClass`) as qualified inline name violations, nor suggest importing inner types directly when the top-level outer class is imported.
-
-* **Fully Qualified Class Names in Javadocs**: Do NOT flag fully qualified class names in Javadoc tags (e.g., `{@link net.minecraft.world.entity.Entity}`) when the referenced class is not used in the Java code itself; formatters (such as Immaculate) strip imports that are only referenced in Javadocs.
-
+* **No Fully Qualified Inline Names**: Import classes at the top of the file rather than referencing them inline.
+  * **Nested & Inner Class References**: Referencing inner classes, records, or enums via their imported top-level outer class (e.g., `OuterClass.InnerClass`) is permitted and does not require direct inner imports.
+  * **Fully Qualified Class Names in Javadocs**: Fully qualified class names in Javadoc tags (e.g., `{@link net.minecraft.world.entity.Entity}`) are permitted when the class is not used in Java code, as formatters strip unreferenced imports.
+* **Field & Method Access (`this.`)**: Do NOT use `this.` prefix for method calls or field access within the same class unless resolving variable shadowing or naming collisions with local variables or method parameters.
 * **Verify Implementation Before Flagging**: NEVER flag utility methods, helper functions, or API calls as incorrect, redundant, or side-unsafe without first inspecting their internal implementation. Always verify the actual logic rather than assuming behavior based on method signatures or naming conventions.
-
-* **Field & Method Access (`this.`)**: Do NOT flag `this.` prefixes on field or method accesses when resolving variable shadowing or naming collisions with local variables or method parameters.
 * **Inlining**: Inline variables and methods that are only used once or merely wrap a single call.
 * **DRY (Don't Repeat Yourself)**: Extract duplicated logic into parent classes or utility methods.
 * **No Redundant Overrides**: If an overridden method only calls `super.method()`, remove the override entirely.
 * **Remove Dead Code**: NEVER commit commented-out code, unused variables, or unused generic parameters.
 * **No `var`**: Do NOT use the `var` keyword in Java. Explicitly define variable types.
 * **Static Imports**: Do NOT use static imports.
-* **No Fully Qualified Inline Names**: Import classes at the top of the file rather than referencing them inline.
-* **Local Methods**: Do NOT use `this.` prefix for method calls within the same class unless resolving a naming collision or shadowing.
 * **Return Types**: Design methods to return informative types or booleans (e.g., success/failure or cancellation) rather than relying on side effects.
 
 ## 4. Git & Review Etiquette
-
 * **No Meaningless or "No Changes Needed" Comments**: NEVER post review comments that conclude with "no action needed", "no further changes needed", "just noting", or purely praise/acknowledge acceptable patterns without requesting an actionable code change. Every review comment MUST propose a concrete, actionable improvement.
 * **PR Description Not Source of Truth for Translations/Grammar**: Do NOT treat the PR description as the authoritative source of truth for code, UI labels, or localization terminology. NEVER suggest changing grammatically correct or intentional terms (such as "Distrust" vs. "Untrust") solely to match phrasing used in the PR description.
 * **Inspect Added Code Only**: When reviewing diff hunks, ALWAYS inspect and evaluate the newly added or modified lines (`+`), NEVER the removed or previous lines (`-`). Do NOT generate review comments, critique patterns, or suggest improvements based on obsolete code that was removed or replaced in the diff.
@@ -68,3 +50,4 @@
 * **Complete Fixes**: Do not mark review comments as resolved without actually fixing the underlying issue.
 * **Trust the Compiler**: All pull requests are verified to compile cleanly with javac/Gradle prior to review. NEVER report compilation errors, syntax errors, duplicate method/field declarations, or missing imports. Do not mistake a method call in an expression for a duplicate declaration.
 * **Accurate Unused Parameter Checks**: NEVER claim a parameter or variable is unused without inspecting the entire method body, including event bus postings (`NeoForge.EVENT_BUS.post(...)`), constructor arguments, method calls, and lambda closures.
+

@@ -35,11 +35,7 @@
 * **GUI Translucency & Culling**: When rendering flat or custom 2D geometry in GUI, NEVER use a `RenderType` with culling enabled. The GUI's flipped Y-axis scale inverses screen-space winding orders. Use non-culling render types.
 
 ## 4. Naming & Terminology
-
-* **Tool vs. Weapon Terminology**: Use the term "tool" for any item that has utility or uses beyond combat (e.g., axes, swords due to block interactions like cobwebs, or yoyos/canes/staves with non-combat utility). Reserve "weapon" strictly for items with exclusively combat uses (e.g., a mace). Do NOT flag items with non-combat utility or interaction mechanics as incorrectly using the term "tool".
-
-* **Event Listener Deduplication**: Do NOT flag event listener method names that deduplicate repeated words between outer and inner event classes (e.g., `onItemCanBreak` for `ItemBreakEvent.CanBreak` instead of `onItemBreakCanBreak`). Omitting redundant or repeated words across the class hierarchy is acceptable.
-
+* **Tool vs. Weapon Terminology**: Use the term "tool" for items that have utility or gameplay interactions beyond combat (e.g., axes, swords due to web clearing, or yoyos/canes/staves with non-combat utility). Reserve "weapon" strictly for items with exclusively combat uses (e.g., a mace). Do NOT flag items with non-combat utility or interaction mechanics as incorrectly using the term "tool", but avoid using "tool" for purely miscellaneous, throwable, or decorative items.
 * **Event Listener Method Naming**: Do NOT include `Event` in event listener method names. Event listener method names must follow the Java class hierarchy from left to right:
   1. **Flat Events (non-nested classes)**:
      Use `on` + the event class name (omitting `Event`):
@@ -59,23 +55,14 @@
      - `KamikotizationEvent.Transform.Pre` -> `onPreKamikotizationTransform`
      - `StealEvent.Start.Pre` -> `onPreStealStart`
   * **Rule**: Never place the domain class name at the end of a method name (e.g., do NOT recommend `onPreTransformMiraculous`, `onBreakBlock`, or `onCommandsRegister`).
-* **Avoid "Tool" for Non-Tools**: Reserve the word "tool" strictly for actual tools (pickaxes, axes, shovels). Do NOT use it for miscellaneous, throwable, or magical items.
+* **Event Listener Deduplication**: Do NOT flag event listener method names that deduplicate repeated words between outer and inner event classes (e.g., `onItemCanBreak` for `ItemBreakEvent.CanBreak` instead of `onItemBreakCanBreak`). Omitting redundant or repeated words across the class hierarchy is acceptable.
 
 ## 5. APIs
-
 * **Level Entity Retrieval by UUID**: Do NOT suggest calling `level.getEntity(uuid)` on `Level` or `player.level()`; `Level` does not have a `getEntity(UUID)` method. Entity retrieval by `UUID` on standard `Level` instances requires `level.getEntities().get(uuid)` (or casting to `ServerLevel`).
-
 * **Dimension-Local Entity Lookups**: Do NOT suggest replacing `level.getEntity(...)` or dimension-local entity lookups with global search utilities (such as `MineraculousEntityUtils.findLivingEntity`) when the lookup is scoped to the current level; global entity utilities search across all dimensions on the server and have different scoping behavior.
-
 * **ItemEntity Empty Stack Discarding**: Do NOT flag or suggest calling `discard()` on an `ItemEntity` when setting its stack to empty or clearing its slot; `ItemEntity` automatically checks if its stack is empty during its tick and handles discarding itself.
-
-* **hasEffect Usage**: Do NOT flag `entity.hasEffect(...)` as an anti-pattern or check effect pattern violation when `entity.getEffect(...)` is not subsequently called and the `MobEffectInstance` itself is not used.
-
+* **Check Effect Pattern & hasEffect**: NEVER call `entity.hasEffect(Effect)` followed by `entity.getEffect(Effect)`. When effect properties (duration/amplifier) are needed, ALWAYS fetch the `MobEffectInstance` into a single variable and check for `!= null`. However, when only checking effect presence, using `entity.hasEffect(Effect)` directly is correct; do NOT flag `hasEffect` when `getEffect` is not called.
 * **Mob Effect Comparisons & Matching**: Do NOT flag explicit, manual iteration, or non-standard comparisons involving `MobEffect`, `MobEffectInstance`, `Holder<MobEffect>`, or `HolderSet<MobEffect>` (e.g., manually iterating over a `HolderSet` and comparing references, `.value()`, or keys instead of using `HolderSet#contains` or `Holder#is`) as redundant or convoluted; Mob Effect matching has quirks requiring specific comparison logic to remain accurate.
-
+* **Side-Effectful Method Calls & Cache Checks**: Do NOT flag `containsKey` or presence checks followed by method calls (e.g., `getBakedModel`) as duplicate lookups when the called method performs essential side effects, initialization, or fallback logic that direct map retrieval (`get()`) bypasses.
 * **Return Types**: ALWAYS verify what methods return instead of assuming (for example, a `level()` method could return a ServerLevel instead of a Level, so it has certain non-nullability of the server).
 
-* **Side-Effectful Method Calls & Cache Checks**: Do NOT flag `containsKey` or presence checks followed by method calls (e.g., `getBakedModel`) as duplicate lookups when the called method performs essential side effects, initialization, or fallback logic that direct map retrieval (`get()`) bypasses.
-
-* **Mob Effect Comparisons**: Do NOT flag explicit or non-standard comparisons involving `MobEffect`, `MobEffectInstance`, or `Holder<MobEffect>` as redundant; Mob Effect matching has quirks requiring specific comparison logic to remain accurate.
-* **Check Effect Pattern**: NEVER call `entity.hasEffect(Effect)` followed by `entity.getEffect(Effect)`. ALWAYS fetch the `MobEffectInstance` into a variable and check for `!= null`.

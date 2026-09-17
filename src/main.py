@@ -1,6 +1,7 @@
 import logging
 import subprocess
 import sys
+import re
 from typing import Optional, Tuple
 from github import Github
 
@@ -9,19 +10,22 @@ from src.github_auth import GitHubAuthManager
 from src.commenter import GitHubCommenter
 from src.reviewer import TommiReviewer, QuotaExceededException, HighDemandException
 from src.learner import TommiLearner
+from src.chat import TommiConversationHandler
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("tommi")
 
 
-from typing import Optional, Tuple
-
 def extract_tommi_command(body: str, is_inline_reply: bool = False) -> Optional[Tuple[str, str]]:
     """
-    Parses a comment body to look for explicit /tommi slash commands.
-    Returns (command_type, argument_text) or None if no command was invoked.
+    Parses a comment body to look for explicit /tommi slash commands or @tommi / @t-o-m-m-i-ai-reviewer discussion pings.
+    Returns (command_type, argument_text) or None if neither was invoked.
     """
+    if not body:
+        return None
+
+    # 1. Check for explicit slash commands line by line
     lines = [line.strip() for line in body.splitlines() if line.strip()]
     for line in lines:
         if line.startswith("/tommi"):
@@ -35,12 +39,17 @@ def extract_tommi_command(body: str, is_inline_reply: bool = False) -> Optional[
             elif lower_line.startswith("/tommi false-positive"):
                 return ("false-positive", line[21:].strip())
             elif is_inline_reply:
-                # Natural feedback reply directly on an inline review comment
                 feedback = line.split("/tommi", 1)[1].strip().lstrip(":, -")
                 return ("false-positive", feedback)
             else:
                 return ("unrecognized", line)
+
+    # 2. Check for discussion pings (@tommi or @t-o-m-m-i-ai-reviewer) anywhere in the comment body
+    if re.search(r"@(?:t-o-m-m-i-ai-reviewer|tommi)\b", body, flags=re.IGNORECASE):
+        return ("discuss", body)
+
     return None
+
 
 
 def main():
@@ -139,11 +148,14 @@ def main():
 
         if cmd_type == "help":
             help_msg = (
-                "🤖 **T.O.M.M.I. AI Assistant Commands**\n\n"
+                "🤖 **T.O.M.M.I. AI Assistant Commands & Discussion**\n\n"
+                "**Commands:**\n"
                 "• `/tommi review` — Run automated code review against this PR\n"
-                "• `/tommi false-positive <explanation>` — Report an inaccurate review comment to refine rules\n"
                 "• `/tommi learn <rule>` — Teach a new coding standard or architectural rule\n"
-                "• `/tommi help` — Display this command reference"
+                "• `/tommi false-positive <explanation>` — Report an inaccurate review comment to refine rules\n"
+                "• `/tommi help` — Display this command reference\n\n"
+                "**Discussion:**\n"
+                "• Ping `@tommi` in any review comment thread or discussion to ask questions, clarify reasoning, or explain code context!"
             )
             commenter.reply_to_comment(help_msg)
             return
@@ -220,6 +232,25 @@ def main():
             commenter.reply_to_comment(response_msg)
             commenter.add_reaction("hooray")
             logger.info("Successfully processed learning feedback.")
+
+        elif cmd_type == "discuss":
+            # Interactive Discussion Mode (Triggered by pinging @tommi or @t-o-m-m-i-ai-reviewer)
+            logger.info(f"Triggered discussion mode by @{config.comment_author} on PR #{config.pr_number}")
+            chat_handler = TommiConversationHandler(
+                config=config,
+                github_client=target_g,
+                auth_token=target_token,
+            )
+            response_msg = chat_handler.handle_discussion(
+                pr=pr,
+                comment_body=config.comment_body,
+                comment_author=config.comment_author or "user",
+                in_reply_to_id=config.in_reply_to_id,
+                file_path=config.file_path,
+                diff_hunk=config.diff_hunk,
+            )
+            commenter.reply_to_comment(response_msg)
+            logger.info("Successfully replied to discussion ping.")
 
         elif cmd_type == "review" or config.event_name in ("pull_request", "pull_request_target"):
             # Code Review Mode (Comment or Automatic on PR Event)

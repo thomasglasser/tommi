@@ -129,5 +129,43 @@ class TestLearnerIntegration(unittest.TestCase):
         result = learner.learn_from_merged_pr(pr=mock_pr, pr_diff="diff")
         self.assertIsNone(result)
 
+    def test_refactor_and_integrate_rule_synthesis(self):
+        config = TommiConfig(github_token="fake", gemini_api_key="fake", github_repository="test/repo", pr_number=1)
+        learner = TommiLearner(config=config, github_client=MagicMock())
+
+        current_doc = "# Core Rules\n\n## 1. Naming\n* **Old Rule**: Don't use bad names.\n"
+        plan = {
+            "target_file": "rules/core.md",
+            "section_header": "## 1. Naming",
+            "rule_markdown": "* **Old Rule**: Don't use bad names or abbreviations.",
+            "summary": "Clarify abbreviations",
+            "rationale": "More specific",
+        }
+
+        refactored_doc = "# Core Rules\n\n## 1. Naming\n* **Old Rule**: Don't use bad names or abbreviations.\n"
+
+        with patch.object(learner, "_generate_content_with_fallback", return_value=refactored_doc):
+            updated = learner._refactor_and_integrate_rule(current_doc, "rules/core.md", plan)
+            self.assertEqual(updated, refactored_doc)
+
+    def test_refactor_and_integrate_rule_fallback_on_failure(self):
+        config = TommiConfig(github_token="fake", gemini_api_key="fake", github_repository="test/repo", pr_number=1)
+        learner = TommiLearner(config=config, github_client=MagicMock())
+
+        current_doc = "# Core Rules\n\n## 1. Naming\n* **Old Rule**: Don't use bad names.\n"
+        plan = {
+            "target_file": "rules/core.md",
+            "section_header": "## 1. Naming",
+            "rule_markdown": "* **New Rule**: Use clear names.",
+            "summary": "Add clear names",
+            "rationale": "Clarity",
+        }
+
+        with patch.object(learner, "_generate_content_with_fallback", side_effect=Exception("API Error")):
+            updated = learner._refactor_and_integrate_rule(current_doc, "rules/core.md", plan)
+            self.assertIn("* **New Rule**: Use clear names.", updated)
+            self.assertIn("* **Old Rule**: Don't use bad names.", updated)
+
 if __name__ == "__main__":
     unittest.main()
+
