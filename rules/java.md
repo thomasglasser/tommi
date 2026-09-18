@@ -7,8 +7,8 @@
 
 ## 2. Language Features & APIs
 * **Javadoc Syntax & Conventions**:
-  * **Single-Line vs. Multi-Line Javadocs**: Use `///` EXCLUSIVELY for single-line Javadocs. Multi-line Javadocs MUST use standard `/** ... */` block syntax. NEVER use or suggest `///` for multi-line comments, and NEVER suggest converting multi-line `/** ... */` Javadocs to `///`.
-  * **Single-Line Field Javadocs**: Do NOT flag `///` comments preceding field declarations as invalid syntax; `///` is valid and standard for all single-line Javadocs, including fields.
+  * **Single-Line vs. Multi-Line Javadocs**: Use `/** javadoc */` single-line format exclusively for concise, single-line Javadocs to remain clean without being messy. NEVER use `///` comments as `///` is Markdown Javadocs for Java 23+ and not supported in Java 21. Multi-line Javadocs MUST use standard `/** ... */` block syntax.
+  * **Single-Line Field Javadocs**: Single-line field Javadocs MUST use the `/** javadoc */` single-line format. NEVER use `///` comments.
   * **Javadoc Scope**: Javadocs are NOT required on private members, private helper methods, or private inner classes/records. Do NOT suggest adding Javadocs to private members.
   * Class Javadocs are expected on APIs and core abstractions, but implementation details (`impl`) do not need them unless necessary.
   * Place separate sentences on separate lines within Javadocs.
