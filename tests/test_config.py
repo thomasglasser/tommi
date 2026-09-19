@@ -23,6 +23,18 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.model_name, "auto")
         self.assertEqual(cfg.tommi_repo, "thomasglasser/tommi")
         self.assertEqual(cfg.thinking_budget, 2048)
+        self.assertEqual(cfg.max_inline_comments, 30)
+
+    @patch.dict(os.environ, {
+        "GITHUB_TOKEN": "ghp_test123",
+        "GEMINI_API_KEY": "gemini_test456",
+        "GITHUB_REPOSITORY": "thomasglasser/Mineraculous",
+        "PR_NUMBER": "42",
+        "MAX_INLINE_COMMENTS": "50",
+    })
+    def test_custom_max_inline_comments(self):
+        cfg = TommiConfig.from_env()
+        self.assertEqual(cfg.max_inline_comments, 50)
 
     @patch.dict(os.environ, {
         "GITHUB_TOKEN": "ghp_test123",

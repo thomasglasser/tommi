@@ -23,6 +23,7 @@ class TommiConfig:
     comment_author: str = ""
     comment_author_type: str = ""
     thinking_budget: int = 2048
+    max_inline_comments: int = 30
 
     @classmethod
     def from_env(cls) -> "TommiConfig":
@@ -69,6 +70,9 @@ class TommiConfig:
         else:
             thinking_budget = 2048
 
+        max_inline_comments_str = os.environ.get("MAX_INLINE_COMMENTS", "30").strip()
+        max_inline_comments = int(max_inline_comments_str) if max_inline_comments_str.isdigit() else 30
+
         return cls(
             gemini_api_key=gemini_api_key,
             github_repository=github_repository,
@@ -88,4 +92,5 @@ class TommiConfig:
             comment_author=comment_author,
             comment_author_type=comment_author_type,
             thinking_budget=thinking_budget,
+            max_inline_comments=max_inline_comments,
         )

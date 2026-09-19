@@ -121,7 +121,8 @@ class TestGitHubCommenter(unittest.TestCase):
 
     @patch("src.commenter.time.sleep")
     def test_post_review_comments_chunking_large_batches(self, mock_sleep):
-        # 65 comments: 50 in first review, 15 in second review
+        # When max_inline_comments allows >50 comments (e.g. 70)
+        self.commenter.max_inline_comments = 70
         comments = [
             {
                 "path": f"src/File{i}.java",
@@ -145,6 +146,123 @@ class TestGitHubCommenter(unittest.TestCase):
         self.assertEqual(len(call_2_kwargs["comments"]), 15)
         self.assertIn("Part 2", call_2_kwargs["body"])
         mock_sleep.assert_called_once_with(1)
+
+    def test_post_review_comments_capping_and_excess_details(self):
+        # Test default cap of 30 inline comments and sorting: CRITICAL > WARNING > SUGGESTION
+        comments = []
+        # 5 critical
+        for i in range(5):
+            comments.append({
+                "path": f"src/Critical{i}.java",
+                "line": i + 1,
+                "body": f"Critical issue {i}",
+                "severity": "CRITICAL",
+                "is_valid_line": True,
+            })
+        # 10 warnings
+        for i in range(10):
+            comments.append({
+                "path": f"src/Warning{i}.java",
+                "line": i + 1,
+                "body": f"Warning issue {i}",
+                "severity": "WARNING",
+                "is_valid_line": True,
+            })
+        # 25 suggestions
+        for i in range(25):
+            comments.append({
+                "path": f"src/Suggestion{i}.java",
+                "line": i + 1,
+                "body": f"Suggestion issue {i}",
+                "severity": "SUGGESTION",
+                "is_valid_line": True,
+            })
+
+        self.commenter.post_review_comments(comments)
+
+        self.mock_pr.create_review.assert_called_once()
+        kwargs = self.mock_pr.create_review.call_args[1]
+        batch_comments = kwargs["comments"]
+        review_body = kwargs["body"]
+
+        # Exactly 30 inline comments
+        self.assertEqual(len(batch_comments), 30)
+
+        # All 5 critical are placed first
+        for i in range(5):
+            self.assertEqual(batch_comments[i]["path"], f"src/Critical{i}.java")
+            self.assertIn("[CRITICAL]", batch_comments[i]["body"])
+
+        # All 10 warnings are placed next
+        for i in range(5, 15):
+            self.assertEqual(batch_comments[i]["path"], f"src/Warning{i - 5}.java")
+            self.assertIn("[WARNING]", batch_comments[i]["body"])
+
+        # 15 suggestions are inline
+        for i in range(15, 30):
+            self.assertEqual(batch_comments[i]["path"], f"src/Suggestion{i - 15}.java")
+            self.assertIn("[SUGGESTION]", batch_comments[i]["body"])
+
+        # The remaining 10 suggestions are consolidated in the <details> section
+        self.assertIn("<details>", review_body)
+        self.assertIn("Additional Findings (10 more summarized)", review_body)
+        for i in range(15, 25):
+            self.assertIn(f"`src/Suggestion{i}.java:{i + 1}`", review_body)
+
+    def test_post_review_comments_deduplication(self):
+        # Mock existing comment on PR
+        mock_existing_rc = MagicMock()
+        mock_existing_rc.path = "src/Existing.java"
+        mock_existing_rc.line = 42
+        mock_existing_rc.body = "**[CRITICAL]** Null pointer risk on line 42"
+        self.mock_pr.get_review_comments.return_value = [mock_existing_rc]
+
+        comments = [
+            # Duplicate of existing PR comment (even without prefix)
+            {
+                "path": "src/Existing.java",
+                "line": 42,
+                "body": "Null pointer risk on line 42",
+                "severity": "CRITICAL",
+                "is_valid_line": True,
+            },
+            # Duplicate within current review run
+            {
+                "path": "src/New.java",
+                "line": 10,
+                "body": "Duplicate new comment",
+                "severity": "WARNING",
+                "is_valid_line": True,
+            },
+            {
+                "path": "src/New.java",
+                "line": 10,
+                "body": "**[WARNING]** Duplicate new comment",
+                "severity": "WARNING",
+                "is_valid_line": True,
+            },
+            # Unique new comment
+            {
+                "path": "src/Unique.java",
+                "line": 20,
+                "body": "Unique comment",
+                "severity": "SUGGESTION",
+                "is_valid_line": True,
+            },
+        ]
+
+        self.commenter.post_review_comments(comments)
+
+        self.mock_pr.create_review.assert_called_once()
+        kwargs = self.mock_pr.create_review.call_args[1]
+        batch_comments = kwargs["comments"]
+
+        # Only 2 comments should survive deduplication: 1 from New.java, 1 from Unique.java
+        self.assertEqual(len(batch_comments), 2)
+        paths = [c["path"] for c in batch_comments]
+        self.assertNotIn("src/Existing.java", paths)
+        self.assertIn("src/New.java", paths)
+        self.assertIn("src/Unique.java", paths)
 
     @patch("src.commenter.time.sleep")
     def test_post_review_comments_fallback_on_batch_failure(self, mock_sleep):

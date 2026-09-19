@@ -1,6 +1,7 @@
 import logging
 from typing import Optional
 from github import Github, Auth, GithubIntegration, GithubException
+from github.GithubRetry import GithubRetry
 import requests
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception
 
@@ -84,10 +85,18 @@ class GitHubAuthManager:
     def get_client_for_repo(self, repo_full_name: str) -> Github:
         """
         Returns an authenticated Github client for the given repository.
+        Configures GithubRetry to only retry idempotent read requests (GET, HEAD, OPTIONS)
+        so that non-idempotent POST operations (like creating reviews) are never duplicated.
         """
         token = self.get_token_for_repo(repo_full_name)
         if token:
-            return Github(auth=Auth.Token(token))
+            retry_policy = GithubRetry(
+                total=3,
+                backoff_factor=1.0,
+                status_forcelist=[500, 502, 503, 504],
+                allowed_methods={"GET", "HEAD", "OPTIONS"}
+            )
+            return Github(auth=Auth.Token(token), retry=retry_policy)
 
         error_details = f": {self._last_auth_error}" if self._last_auth_error else "."
         raise ValueError(f"No valid GitHub authentication available for repository '{repo_full_name}'{error_details}")

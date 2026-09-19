@@ -83,6 +83,7 @@ def main():
         repo_name=config.github_repository,
         pr_number=config.pr_number,
         comment_id=config.comment_id,
+        max_inline_comments=getattr(config, "max_inline_comments", 30),
     )
 
     pr = commenter.pr
