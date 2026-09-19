@@ -23,7 +23,7 @@ class TestConfig(unittest.TestCase):
         self.assertEqual(cfg.model_name, "auto")
         self.assertEqual(cfg.tommi_repo, "thomasglasser/tommi")
         self.assertEqual(cfg.thinking_budget, 2048)
-        self.assertEqual(cfg.max_inline_comments, 30)
+        self.assertIsNone(cfg.max_inline_comments)
 
     @patch.dict(os.environ, {
         "GITHUB_TOKEN": "ghp_test123",

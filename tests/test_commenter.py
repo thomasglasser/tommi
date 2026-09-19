@@ -121,8 +121,7 @@ class TestGitHubCommenter(unittest.TestCase):
 
     @patch("src.commenter.time.sleep")
     def test_post_review_comments_chunking_large_batches(self, mock_sleep):
-        # When max_inline_comments allows >50 comments (e.g. 70)
-        self.commenter.max_inline_comments = 70
+        # 65 comments: 30 in first review, 30 in second review, 5 in third review
         comments = [
             {
                 "path": f"src/File{i}.java",
@@ -136,19 +135,26 @@ class TestGitHubCommenter(unittest.TestCase):
 
         self.commenter.post_review_comments(comments)
 
-        self.assertEqual(self.mock_pr.create_review.call_count, 2)
+        self.assertEqual(self.mock_pr.create_review.call_count, 3)
         call_1_kwargs = self.mock_pr.create_review.call_args_list[0][1]
         call_2_kwargs = self.mock_pr.create_review.call_args_list[1][1]
+        call_3_kwargs = self.mock_pr.create_review.call_args_list[2][1]
 
-        self.assertEqual(len(call_1_kwargs["comments"]), 50)
+        self.assertEqual(len(call_1_kwargs["comments"]), 30)
         self.assertIn("65 Warnings", call_1_kwargs["body"])
 
-        self.assertEqual(len(call_2_kwargs["comments"]), 15)
+        self.assertEqual(len(call_2_kwargs["comments"]), 30)
         self.assertIn("Part 2", call_2_kwargs["body"])
-        mock_sleep.assert_called_once_with(1)
+
+        self.assertEqual(len(call_3_kwargs["comments"]), 5)
+        self.assertIn("Part 3", call_3_kwargs["body"])
+
+        # Pacing: 5s sleep between chunks
+        mock_sleep.assert_called_with(5)
 
     def test_post_review_comments_capping_and_excess_details(self):
-        # Test default cap of 30 inline comments and sorting: CRITICAL > WARNING > SUGGESTION
+        # When max_inline_comments = 30 is explicitly configured
+        self.commenter.max_inline_comments = 30
         comments = []
         # 5 critical
         for i in range(5):
@@ -352,6 +358,29 @@ class TestGitHubCommenter(unittest.TestCase):
         self.mock_pr.create_review.assert_called_once()
         kwargs = self.mock_pr.create_review.call_args[1]
         self.assertIn("apply them directly.\n\n" + summary_note, kwargs["body"])
+
+
+    @patch("src.commenter.time.sleep")
+    def test_post_review_comments_secondary_rate_limit_retry_on_chunk(self, mock_sleep):
+        # When review chunk encounters 403 secondary rate limit, it backs off 15s and retries
+        self.mock_pr.create_review.side_effect = [
+            GithubException(403, {"message": "You have exceeded a secondary rate limit. Please wait a few minutes."}),
+            MagicMock(),
+        ]
+        comments = [
+            {
+                "path": "src/Test.java",
+                "line": 10,
+                "body": "Issue 1",
+                "severity": "WARNING",
+                "is_valid_line": True,
+            }
+        ]
+
+        self.commenter.post_review_comments(comments)
+
+        self.assertEqual(self.mock_pr.create_review.call_count, 2)
+        mock_sleep.assert_called_with(15)
 
 
 if __name__ == "__main__":

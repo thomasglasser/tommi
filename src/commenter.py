@@ -15,7 +15,7 @@ class GitHubCommenter:
         repo_name: str,
         pr_number: int,
         comment_id: Optional[int] = None,
-        max_inline_comments: int = 30,
+        max_inline_comments: Optional[int] = None,
     ):
         self.g = github_client
         self.repo_name = repo_name
@@ -169,9 +169,13 @@ class GitHubCommenter:
         inline_candidates = [item for item in valid_items if item.get("is_valid_line", True)]
         unplaced_items = [item for item in valid_items if not item.get("is_valid_line", True)]
 
-        # Cap inline comments to max_inline_comments and consolidate excess
-        top_inline = inline_candidates[:self.max_inline_comments]
-        excess_inline = inline_candidates[self.max_inline_comments:]
+        # Cap inline comments if max_inline_comments is configured, otherwise post all in batches
+        if self.max_inline_comments and self.max_inline_comments > 0:
+            top_inline = inline_candidates[:self.max_inline_comments]
+            excess_inline = inline_candidates[self.max_inline_comments:]
+        else:
+            top_inline = inline_candidates
+            excess_inline = []
 
         batch_comments = []
         for item in top_inline:
@@ -220,8 +224,8 @@ class GitHubCommenter:
             logger.info(f"No inline comments posted to diff. Posted {len(unplaced_notes) + len(excess_notes)} note(s) as an issue comment.")
             return
 
-        # 1. Try Batch Review Submission (chunks of up to 50 comments)
-        max_comments_per_review = 50
+        # 1. Try Batch Review Submission (chunks of up to 30 comments)
+        max_comments_per_review = 30
         chunks = [
             batch_comments[i:i + max_comments_per_review]
             for i in range(0, len(batch_comments), max_comments_per_review)
@@ -230,14 +234,28 @@ class GitHubCommenter:
         try:
             for idx, chunk in enumerate(chunks):
                 chunk_body = full_review_body if idx == 0 else f"### 🤖 T.O.M.M.I. Code Review (Part {idx + 1})\n\nPlease review the inline feedback below."
-                self.pr.create_review(
-                    commit=latest_commit,
-                    body=chunk_body,
-                    comments=chunk,
-                    event="COMMENT"
-                )
+                try:
+                    self.pr.create_review(
+                        commit=latest_commit,
+                        body=chunk_body,
+                        comments=chunk,
+                        event="COMMENT"
+                    )
+                except GithubException as chunk_err:
+                    if chunk_err.status in (403, 429) or (chunk_err.status == 422 and "secondary rate limit" in str(chunk_err.data).lower()):
+                        logger.warning(f"Secondary rate limit on review part {idx + 1}. Backing off for 15s...")
+                        time.sleep(15)
+                        self.pr.create_review(
+                            commit=latest_commit,
+                            body=chunk_body,
+                            comments=chunk,
+                            event="COMMENT"
+                        )
+                    else:
+                        raise chunk_err
+
                 if idx < len(chunks) - 1:
-                    time.sleep(1)
+                    time.sleep(5)
             logger.info(
                 f"Successfully posted batch review with {len(batch_comments)} inline comment(s)"
                 + (f" across {len(chunks)} review(s)" if len(chunks) > 1 else "")
