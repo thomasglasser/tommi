@@ -922,7 +922,7 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
    ```suggestion
    exact replacement code
    ```
-8. Do NOT leave generic praise or comment on valid, unchanged code.
+8. **Never Emit Self-Retracted Comments ("No Issue")**: Do NOT leave generic praise, commentary on valid code, or self-retracted comments. If you evaluate a line and realize that the code is intentional, shadows a variable, or that "no issue" exists, DO NOT output a comment for it! Discard it completely. If all candidate issues turn out to be non-issues, return an empty array `[]`.
 9. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
 10. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
@@ -1062,6 +1062,60 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 
         return True
 
+    def _is_actionable_comment(self, body: str) -> bool:
+        """
+        Validates that a comment actually proposes an actionable change and does not
+        retract itself (e.g. concluding 'No issue', 'no action needed', 'actually fine').
+        """
+        clean = body.strip().rstrip(".! \t\r\n").lower()
+        if not clean:
+            return False
+
+        # Check ending of comment (where retractions typically appear)
+        last_sentence = clean.splitlines()[-1].strip() if clean.splitlines() else clean
+        retraction_endings = [
+            "no issue",
+            "no issues",
+            "no issue here",
+            "no issues here",
+            "no action needed",
+            "no action required",
+            "no changes needed",
+            "no change needed",
+            "no further changes needed",
+            "never mind",
+            "nevermind",
+            "just noting",
+            "all good",
+            "looks good",
+            "this is fine",
+            "this is acceptable",
+            "this is correct",
+            "this is valid",
+            "fine as is",
+            "correct as is",
+            "acceptable as is",
+        ]
+        for end in retraction_endings:
+            if last_sentence.endswith(end):
+                return False
+
+        # Substring / pattern check for self-retraction phrases
+        retraction_patterns = [
+            r"\bso\s+(?:this\.?|it)\s+is\s+mandatory(?: here)?[\.!]\s*no issue",
+            r"\bwait,?\s+the\s+parameter\s+shadows\b.*?no issue",
+            r"\bno action (?:is )?needed\b",
+            r"\bno changes? (?:are |is )?needed\b",
+            r"\bno further changes? (?:are |is )?needed\b",
+            r"\bno issue(?:s)? (?:found|detected)\b",
+            r"\bactually,?\s+(?:this is|it is|it's)\s+(?:fine|acceptable|correct|valid)\b",
+        ]
+        for pat in retraction_patterns:
+            if re.search(pat, clean, re.IGNORECASE):
+                return False
+
+        return True
+
     def _validate_comments(self, raw_comments: List[Dict[str, Any]], parsed_diff: ParsedDiff) -> List[Dict[str, Any]]:
         severity_rank = {
             "CRITICAL": 1,
@@ -1079,6 +1133,11 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
             severity = raw_sev if raw_sev in severity_rank else "WARNING"
 
             if not path or line is None or not body:
+                continue
+
+            # Discard self-retracted comments where the AI thought out loud and concluded no issue / no action needed
+            if not self._is_actionable_comment(body):
+                logger.info(f"Discarding non-actionable / self-retracted comment on '{path}:{line}': {body[:60]}...")
                 continue
 
             # Ensure line number is a positive int

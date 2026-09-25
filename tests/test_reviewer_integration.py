@@ -1379,5 +1379,35 @@ class TestFetchPrDiffFallback(unittest.TestCase):
         self.assertNotIn("```suggestion", validated[0]["body"])
         self.assertIn("```java", validated[0]["body"])
 
+    def test_validate_comments_discards_self_retracted_and_no_issue_comments(self):
+        from src.diff_parser import parse_unified_diff
+        config = TommiConfig(github_token="fake", gemini_api_key="fake", github_repository="owner/repo", pr_number=1)
+        reviewer = TommiReviewer(config)
+
+        diff_text = """diff --git a/src/ExtendedHolder.java b/src/ExtendedHolder.java
+--- a/src/ExtendedHolder.java
++++ b/src/ExtendedHolder.java
+@@ -190,3 +190,3 @@ public class ExtendedHolder {
+     public boolean is(Holder<R> holder) {
+-        return false;
++        return this.holder != null && this.holder.is(holder);
+     }
+"""
+        parsed = parse_unified_diff(diff_text)
+        self_retracted_body = (
+            "Unnecessary `this.` qualification on `this.holder`... wait, the parameter shadows the field `holder`! "
+            "Rule: 'ALWAYS verify parameter and local variable names in the method before suggesting the removal of this.. "
+            "If a parameter or local variable shadows a field, this. is MANDATORY.' So this. is mandatory here! No issue."
+        )
+        raw_comment = {
+            "path": "src/ExtendedHolder.java",
+            "line": 192,
+            "body": self_retracted_body,
+            "severity": "SUGGESTION"
+        }
+        validated = reviewer._validate_comments([raw_comment], parsed)
+        self.assertEqual(len(validated), 0, "Self-retracted comment concluding with 'No issue' must be discarded")
+
+
 
 
