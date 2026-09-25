@@ -927,6 +927,7 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
    - Do NOT claim constructors, static factory methods, or fields are out of sequence without verifying their actual line numbers in the surrounding code. If fields precede constructors, constructors precede static factories, and static factories precede instance methods, the layout is strictly correct. Do NOT make assertions about other classes or subclasses without reading them.
    - Do NOT instruct the author to relocate methods that the diff just relocated (avoid before/after inversion). Evaluate added lines (+) in their new location.
    - Do NOT suggest extracting a shared base class across classes that already extend distinct parent/abstract classes (e.g. `FabricItemsRegistrar extends Registrar.Items`). Java enforces single class inheritance; subclasses of different abstract classes cannot inherit from a common base class.
+   - Do NOT flag `ItemHolder#asItem()` returning `get()` as inconsistent with `BlockHolder#asItem()` calling `get().asItem()`; `Item`s are already items, whereas `Block`s must call `.asItem()` to retrieve their item.
 7. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
 8. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
    ```suggestion
