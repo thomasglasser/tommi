@@ -842,7 +842,16 @@ class TommiReviewer:
 
         # Validate, adjust line numbers, and sort by severity priority
         validated_comments = self._validate_comments(all_comments_data, parsed_diff)
-        return validated_comments
+
+        # Secondary final verification pass: LLM audits each candidate comment against rules and code context before posting
+        verified_comments = self._verify_candidate_comments(
+            validated_comments,
+            rules=rules,
+            parsed_diff=parsed_diff,
+            preferred_model=preferred_model,
+            candidate_models=candidate_models,
+        )
+        return verified_comments
 
     def _build_review_prompt(
         self,
@@ -1141,314 +1150,133 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 
         return True
 
-    def _is_layout_inversion_hallucination(self, path: str, body: str, line: Optional[int] = None) -> bool:
-        """
-        Detects before/after diff inversion hallucinations where the AI claims a class layout
-        ordering violation (e.g. constructor should be above static factories, or static factories
-        below constructors) when the surrounding source code already places them in that exact order.
-        """
-        if not path or not path.endswith(".java") or not getattr(self, "inspector", None):
-            return False
-
-        body_lower = body.lower()
-        layout_triggers = [
-            "class layout",
-            "member sequence",
-            "placed directly below constructor",
-            "placed directly above",
-            "below constructors",
-            "above constructors",
-            "below static factories",
-            "above static factories",
-            "static factory methods",
-        ]
-        if not any(trigger in body_lower for trigger in layout_triggers):
-            return False
-
-        resolved_path = self.inspector._resolve_safe_path(path)
-        if not resolved_path or not os.path.isfile(resolved_path):
-            return False
-
-        try:
-            with open(resolved_path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-        except Exception:
-            return False
-
-        file_text = "".join(lines)
-        class_match = re.search(r"\b(?:public\s+|protected\s+|private\s+)?(?:abstract\s+)?class\s+(\w+)", file_text)
-        if not class_match:
-            return False
-        class_name = class_match.group(1)
-
-        # Find line numbers of constructors (1-indexed)
-        constructor_pattern = re.compile(r"^\s*(?:public|protected|private)?\s*" + re.escape(class_name) + r"\s*\(")
-        constructor_lines = [i for i, l in enumerate(lines, start=1) if constructor_pattern.search(l)]
-
-        # Find line numbers of static factory/helper methods
-        static_method_pattern = re.compile(r"^\s*public\s+static\s+(?:<[^>]+>\s+)?[A-Za-z0-9_<>\[\],\s]+\s+(\w+)\s*\(")
-        static_factory_lines = [i for i, l in enumerate(lines, start=1) if static_method_pattern.search(l)]
-
-        # Check Claim 1: Constructor should be above static factories / static factories below constructors
-        claims_constructor_above_static = (
-            re.search(r"static (?:factory )?methods?.*(?:below|after).*constructor", body_lower)
-            or re.search(r"constructor.*(?:above|before).*static", body_lower)
-            or "must be placed directly below constructors" in body_lower
-            or "should be placed directly above the static factory methods" in body_lower
-            or "above any static factory methods" in body_lower
-        )
-        if claims_constructor_above_static and constructor_lines and static_factory_lines:
-            last_constructor = max(constructor_lines)
-            first_static = min(static_factory_lines)
-            if last_constructor < first_static:
-                # The constructor is ALREADY above all static factory methods!
-                return True
-
-        # Check Claim 2: Static factories above instance methods / instance methods below static factories
-        claims_instance_below_static = (
-            re.search(r"instance methods?.*(?:below|after).*static", body_lower)
-            or re.search(r"static.*(?:above|before).*instance", body_lower)
-            or "should remain below the static factories" in body_lower
-        )
-        if claims_instance_below_static and static_factory_lines:
-            last_static = max(static_factory_lines)
-            if line is not None and line > last_static:
-                if not constructor_lines or max(constructor_lines) < min(static_factory_lines):
-                    return True
-
-        return False
-
-    def _get_enclosing_method_parameters(self, lines: List[str], target_line: int) -> set[str]:
-        """
-        Finds the method enclosing target_line (1-indexed) in a Java source file
-        and returns the set of parameter names declared by that method.
-        """
-        if target_line < 1 or target_line > len(lines):
-            return set()
-
-        header_lines = []
-        found_signature = False
-        for i in range(target_line - 1, max(-1, target_line - 60), -1):
-            line_str = lines[i].strip()
-            if re.search(r"\b(?:class|interface|enum|record)\s+\w+", line_str) and "(" not in line_str:
-                break
-            header_lines.insert(0, line_str)
-            if "(" in line_str:
-                found_signature = True
-                break
-
-        if not found_signature:
-            return set()
-
-        full_header = " ".join(header_lines)
-        m = re.search(r"\b([a-zA-Z0-9_]+)\s*\(([^)]*)\)", full_header)
-        if not m:
-            return set()
-
-        param_str = m.group(2).strip()
-        if not param_str:
-            return set()
-
-        param_names = set()
-        raw_params = []
-        curr = []
-        depth = 0
-        for ch in param_str:
-            if ch == '<':
-                depth += 1
-            elif ch == '>':
-                depth -= 1
-            elif ch == ',' and depth == 0:
-                raw_params.append("".join(curr).strip())
-                curr = []
-                continue
-            curr.append(ch)
-        if curr:
-            raw_params.append("".join(curr).strip())
-
-        for p in raw_params:
-            words = [w for w in re.split(r"[\s\[\]]+", p.strip()) if w and not w.startswith("@")]
-            if words:
-                param_name = words[-1]
-                if re.match(r"^[a-zA-Z0-9_]+$", param_name):
-                    param_names.add(param_name)
-
-        return param_names
-
-    def _is_this_shadowing_hallucination(self, path: str, body: str, line: Optional[int] = None) -> bool:
-        """
-        Detects false-positive comments alleging unnecessary 'this.' qualifiers when
-        the accessed member name is actually shadowed by a parameter of the enclosing method.
-        """
-        if not path or not path.endswith(".java") or not getattr(self, "inspector", None) or line is None:
-            return False
-
-        body_lower = body.lower()
-        if "this." not in body_lower and "this prefix" not in body_lower and "this qualifier" not in body_lower:
-            return False
-
-        removal_cues = ["unnecessary", "redundant", "avoid", "remove", "omit", "do not use", "qualifier", "no field shadowing"]
-        if not any(cue in body_lower for cue in removal_cues):
-            return False
-
-        resolved_path = self.inspector._resolve_safe_path(path)
-        if not resolved_path or not os.path.isfile(resolved_path):
-            return False
-
-        try:
-            with open(resolved_path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-        except Exception:
-            return False
-
-        if line < 1 or line > len(lines):
-            return False
-
-        target_line_text = lines[line - 1]
-        this_matches = set(re.findall(r"\bthis\.([a-zA-Z0-9_]+)\b", target_line_text))
-        if not this_matches:
-            this_matches = set(re.findall(r"\bthis\.([a-zA-Z0-9_]+)\b", body))
-
-        if not this_matches:
-            return False
-
-        param_names = self._get_enclosing_method_parameters(lines, line)
-        for var_name in this_matches:
-            if var_name in param_names:
-                return True
-
-        return False
-
-    def _is_formatter_conflict_hallucination(
+    def _verify_candidate_comments(
         self,
-        path: str,
-        body: str,
-        line: Optional[int],
-        parsed_diff: Optional[ParsedDiff] = None,
-        target_code: Optional[str] = None,
-    ) -> bool:
+        candidate_comments: List[Dict[str, Any]],
+        rules: LoadedRules,
+        parsed_diff: Optional[ParsedDiff],
+        preferred_model: Optional[str] = None,
+        candidate_models: Optional[List[str]] = None,
+    ) -> List[Dict[str, Any]]:
         """
-        Detects formatter conflict hallucinations where the AI claims that empty method bodies
-        or blocks should not be collapsed into a single line (demanding expansion across multiple lines),
-        or flags empty static initialization hooks (like `public static void init() {}`) as dead code.
-        Automated formatters (Spotless/Immaculate) enforce `{}` on a single line, and multi-loader mods
-        use empty static `init()` hooks to force classloading and static initialization.
+        Secondary final validation pass: The AI audits its own candidate review comments against
+        the repository rules, diff, and surrounding source code before posting. Filters out false
+        positives, hallucinations, and rule contradictions cleanly without hardcoded heuristics.
         """
-        body_lower = body.lower()
+        if not candidate_comments:
+            return []
 
-        # Phrases indicating the AI is demanding multi-line expansion of empty blocks / {}
-        expand_braces_triggers = [
-            "collapsed into a single line",
-            "collapsed onto a single line",
-            "expand the curly braces",
-            "expand the braces",
-            "curly braces onto separate lines",
-            "braces onto separate lines",
-            "braces should be on separate lines",
-            "expand the method body",
-            "separate lines or remove the method",
-            "method bodies, even when empty",
-            "even when empty, should not be collapsed",
-            "bodies, even when empty, should not be collapsed",
-            "collapsed into {}",
-            "collapsed to {}",
+        if not getattr(self.config, "enable_secondary_validation", True):
+            return candidate_comments
+
+        logger.info(f"Running secondary final verification pass on {len(candidate_comments)} candidate comment(s)...")
+
+        # Format candidates cleanly with index
+        comments_for_audit = [
+            {
+                "index": i,
+                "path": c.get("path"),
+                "line": c.get("line"),
+                "severity": c.get("severity"),
+                "body": c.get("body"),
+            }
+            for i, c in enumerate(candidate_comments)
         ]
-        has_expand_trigger = any(t in body_lower for t in expand_braces_triggers) or (
-            ("expand" in body_lower or "separate line" in body_lower)
-            and ("brace" in body_lower or "empty method" in body_lower or "{}" in body)
-        )
+        formatted_candidates = json.dumps(comments_for_audit, indent=2)
 
-        # Flagging init() or lifecycle hooks as dead code
-        dead_code_init_trigger = (
-            ("dead code" in body_lower or "unused method" in body_lower or "remove the method" in body_lower)
-            and ("init()" in body_lower or "init (" in body_lower or "lifecycle" in body_lower)
-        )
+        # Gather surrounding context for the touched files
+        context_chunks = []
+        if getattr(self, "inspector", None):
+            touched_files = set(c.get("path") for c in candidate_comments if c.get("path"))
+            for f in touched_files:
+                lines = [c.get("line") for c in candidate_comments if c.get("path") == f and c.get("line")]
+                ctx = self.inspector.get_hunk_context(f, changed_lines=lines, padding=60)
+                if not ctx.startswith("Error:"):
+                    context_chunks.append(ctx)
 
-        # Check if suggestion in body expands single-line {} onto multiple lines
-        sugg_match = re.search(r"```suggestion\r?\n(.*?)\r?\n```", body, re.DOTALL)
-        has_sugg_expansion = False
-        sugg_code = ""
-        if sugg_match:
-            sugg_code = sugg_match.group(1)
-            if len(sugg_code.splitlines()) > 1:
-                has_sugg_expansion = True
+        code_context = "\n\n".join(context_chunks) if context_chunks else (parsed_diff.raw_diff if parsed_diff else "")
+        formatted_rules = rules.format_for_prompt()
 
-        if not (has_expand_trigger or dead_code_init_trigger or has_sugg_expansion):
-            return False
+        audit_prompt = f"""
+You are Thomas Glasser (@thomasglasser), performing a strict, rigorous final quality audit of draft code review comments before posting to the Pull Request.
 
-        # Retrieve target line content if available
-        target_text = target_code or ""
-        if not target_text and parsed_diff and path in parsed_diff.line_contents and line is not None and line in parsed_diff.line_contents[path]:
-            target_text = parsed_diff.line_contents[path][line]
+### REPOSITORY RULES & EXPECTATIONS:
+{formatted_rules}
 
-        if not target_text and getattr(self, "inspector", None) and line is not None:
-            resolved_path = self.inspector._resolve_safe_path(path)
-            if resolved_path and os.path.isfile(resolved_path):
+### CODE CONTEXT (Files with draft comments):
+{code_context}
+
+### DRAFT COMMENTS UNDER REVIEW:
+{formatted_candidates}
+
+### VERIFICATION INSTRUCTIONS:
+Rigorously review EACH draft comment above against the repository rules and the code context.
+Your goal is to ensure 100% precision: eliminate false positives, hallucinations, rule contradictions, and bad advice!
+
+For every draft comment, evaluate:
+1. Rule Compliance: Does the comment strictly adhere to the repository rules?
+   - Reject comments that contradict rules (e.g. demanding multi-line expansion of empty '{{}}' methods, flagging active static 'init()' hooks as dead code, suggesting stripping 'ResourceKey' from service SPIs, suggesting flawed delegation that breaks covariant return types, or claiming member order is wrong when line numbers confirm it is correct).
+2. Bug & Type Safety: Would following the advice break compilation, break type covariance, or introduce bugs (e.g. stripping 'this.' when a parameter shadows a field)?
+3. Factual Accuracy: Does the code context actually support the comment's claims?
+4. Genuine Actionability: Is this a genuine defect or concrete improvement? Reject pedantic nitpicks or non-actionable observations.
+
+For each comment, output a decision object:
+- "index": The index of the draft comment (0, 1, 2, ...).
+- "keep": true if the comment is completely valid, accurate, and should be posted; false if it is a false positive or flawed suggestion that should be discarded.
+- "reason": Concise explanation of your verdict.
+
+Return ONLY a strict JSON array of objects, starting with '[' and ending with ']'.
+"""
+
+        models_to_try = []
+        if preferred_model:
+            models_to_try.append(preferred_model)
+        if candidate_models:
+            for m in candidate_models:
+                if m not in models_to_try:
+                    models_to_try.append(m)
+        if not models_to_try:
+            models_to_try = ["gemini-2.5-flash"]
+
+        raw_verdicts = None
+        for model in models_to_try:
+            try:
+                raw_json = self._execute_review_generation(model, audit_prompt, enable_tools=False)
+                raw_verdicts = self._parse_and_repair_json(raw_json)
+                if isinstance(raw_verdicts, list):
+                    break
+            except Exception as e:
+                logger.warning(f"Secondary verification pass failed with model '{model}': {e}")
+                continue
+
+        if not isinstance(raw_verdicts, list):
+            logger.warning("Secondary verification pass did not produce a valid verdict list; keeping candidate comments.")
+            return candidate_comments
+
+        keep_decisions: Dict[int, Tuple[bool, str]] = {}
+        for item in raw_verdicts:
+            if isinstance(item, dict) and "index" in item:
+                idx = item.get("index")
+                keep = bool(item.get("keep", True))
+                reason = str(item.get("reason", ""))
                 try:
-                    with open(resolved_path, "r", encoding="utf-8", errors="replace") as f:
-                        lines = f.readlines()
-                        if 1 <= line <= len(lines):
-                            target_text = lines[line - 1]
-                except Exception:
+                    idx = int(idx)
+                    keep_decisions[idx] = (keep, reason)
+                except (ValueError, TypeError):
                     pass
 
-        if has_sugg_expansion and target_text:
-            if "{}" in target_text or re.search(r"\{\s*\}", target_text):
-                clean_sugg = [re.sub(r"[\s\{\}]+$", "", l.strip()) for l in sugg_code.splitlines() if re.sub(r"[\s\{\}]+$", "", l.strip())]
-                clean_target = [re.sub(r"[\s\{\}]+$", "", l.strip()) for l in target_text.splitlines() if re.sub(r"[\s\{\}]+$", "", l.strip())]
-                if clean_sugg == clean_target:
-                    return True
+        verified = []
+        for i, c in enumerate(candidate_comments):
+            decision, reason = keep_decisions.get(i, (True, "No explicit verdict, retained by default"))
+            if decision:
+                verified.append(c)
+            else:
+                logger.info(
+                    f"Secondary verification discarded comment on '{c.get('path')}:{c.get('line')}': {reason}"
+                )
 
-        if has_expand_trigger:
-            if not target_text:
-                return True
-            if "{}" in target_text or re.search(r"\{\s*\}", target_text) or "init()" in target_text or "init" in target_text:
-                return True
-            if sugg_match:
-                sc = sugg_code.strip()
-                if re.fullmatch(r"\{[\s\r\n]*\}", sc) or ("{" in sc and "}" in sc and not any(c.isalnum() for c in sc.replace("public", "").replace("static", "").replace("void", ""))):
-                    return True
-
-        if dead_code_init_trigger:
-            if not target_text or "init" in target_text.lower() or "{}" in target_text:
-                return True
-
-        return False
-
-    def _is_service_signature_simplification_hallucination(self, path: str, body: str) -> bool:
-        """
-        Detects false positives where the AI suggests removing ResourceKey parameters from
-        service factory methods (like RegistrationService#createDataComponents) to force
-        consistency with createItems/createBlocks. DataComponentType can exist in custom
-        component registries, so the SPI intentionally accepts an explicit ResourceKey parameter.
-        """
-        body_lower = body.lower()
-        if "createdatacomponents" in body_lower:
-            triggers = ["resourcekey", "only take", "simplified to", "registries.data_component_type", "implicit"]
-            if any(term in body_lower for term in triggers):
-                return True
-        return False
-
-    def _is_specialized_registrar_flawed_delegation(self, path: str, body: str) -> bool:
-        """
-        Detects false positives where the AI suggests composing or delegating to a generic
-        base registrar (such as FabricRegistrar<T>) inside specialized registrars (Items, Blocks,
-        Entities). Specialized registrars must return covariant holder subtypes (ItemHolder, BlockHolder);
-        delegating to a generic registrar breaks covariance and forces redundant instance allocations
-        and re-wrapping.
-        """
-        body_lower = body.lower()
-        delegation_words = ["delegat", "compos", "forward"]
-        registrar_targets = ["fabricregistrar", "generic registrar", "base registrar", "registrar<t>"]
-        specialized_words = ["specialized registrar", "fabricitemsregistrar", "fabricblocksregistrar", "subclass", "concrete subclass"]
-
-        has_delegation = any(w in body_lower for w in delegation_words)
-        has_registrar_target = any(t in body_lower for t in registrar_targets)
-        has_specialized = any(s in body_lower for s in specialized_words)
-
-        if has_delegation and has_registrar_target and has_specialized:
-            return True
-        return False
+        logger.info(f"Secondary verification complete: {len(verified)}/{len(candidate_comments)} comment(s) approved.")
+        return verified
 
     def _validate_comments(self, raw_comments: List[Dict[str, Any]], parsed_diff: ParsedDiff) -> List[Dict[str, Any]]:
         severity_rank = {
@@ -1472,31 +1300,6 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
             # Discard self-retracted comments where the AI thought out loud and concluded no issue / no action needed
             if not self._is_actionable_comment(body, item):
                 logger.info(f"Discarding non-actionable / self-retracted comment on '{path}:{line}': {body[:60]}...")
-                continue
-
-            # Discard before/after layout inversion hallucinations where class members are already correctly ordered
-            if self._is_layout_inversion_hallucination(path, body, line):
-                logger.info(f"Discarding layout inversion hallucination on '{path}:{line}': {body[:60]}...")
-                continue
-
-            # Discard false positive comments attacking 'this.' when 'this.' resolves parameter shadowing
-            if self._is_this_shadowing_hallucination(path, body, line):
-                logger.info(f"Discarding false positive on '{path}:{line}': 'this.' is mandatory due to parameter shadowing: {body[:60]}...")
-                continue
-
-            # Discard formatter conflict hallucinations demanding expansion of single-line {} or flagging init() {} as dead code
-            if self._is_formatter_conflict_hallucination(path, body, line, parsed_diff, target_code=target_code):
-                logger.info(f"Discarding formatter conflict hallucination on '{path}:{line}': {body[:60]}...")
-                continue
-
-            # Discard false positives suggesting removal of ResourceKey from service factory methods
-            if self._is_service_signature_simplification_hallucination(path, body):
-                logger.info(f"Discarding false positive on '{path}:{line}': SPI factory parameterization is required: {body[:60]}...")
-                continue
-
-            # Discard false positives suggesting flawed delegation from specialized registrars to base generic registrars
-            if self._is_specialized_registrar_flawed_delegation(path, body):
-                logger.info(f"Discarding flawed registrar delegation on '{path}:{line}': breaking covariance: {body[:60]}...")
                 continue
 
             # Ensure line number is a positive int
@@ -1550,41 +1353,6 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
                                     f"(target code already matches suggested code): {body[:60]}..."
                                 )
                                 continue
-                # Discard bug-injecting suggestions that strip 'this.' to create self-referential calls (e.g. holder.is(holder))
-                sugg_match = re.search(r"```suggestion\r?\n(.*?)\r?\n```", body, re.DOTALL)
-                if sugg_match:
-                    sugg_code = sugg_match.group(1).strip()
-                    target_line_content = parsed_diff.line_contents.get(path, {}).get(line, "")
-                    self_calls = re.findall(r"\b([A-Za-z0-9_]+)\.[A-Za-z0-9_]+\(\s*\1\s*\)", sugg_code)
-                    if any(f"this.{v}" in target_line_content for v in self_calls):
-                        logger.info(
-                            f"Discarding bug-injecting suggestion comment on '{path}:{line}' "
-                            f"(suggestion creates self-referential call): {body[:60]}..."
-                        )
-                        continue
-
-                # Discard suggestions that expand single-line empty braces {} across multiple lines
-                sugg_match = re.search(r"```suggestion\r?\n(.*?)\r?\n```", body, re.DOTALL)
-                if sugg_match:
-                    sugg_code = sugg_match.group(1)
-                    target_line_content = parsed_diff.line_contents.get(path, {}).get(line, "")
-                    if "{}" in target_line_content or re.search(r"\{\s*\}", target_line_content):
-                        sugg_stripped_statements = [
-                            re.sub(r"[\s\{\}]+$", "", l.strip())
-                            for l in sugg_code.splitlines()
-                            if re.sub(r"[\s\{\}]+$", "", l.strip())
-                        ]
-                        target_stripped_statements = [
-                            re.sub(r"[\s\{\}]+$", "", l.strip())
-                            for l in target_line_content.splitlines()
-                            if re.sub(r"[\s\{\}]+$", "", l.strip())
-                        ]
-                        if sugg_stripped_statements == target_stripped_statements and len(sugg_code.splitlines()) > 1:
-                            logger.info(
-                                f"Discarding formatter conflict suggestion on '{path}:{line}' "
-                                f"(expands empty braces onto multiple lines): {body[:60]}..."
-                            )
-                            continue
 
                 if not self._is_suggestion_safe(body, path, line, extracted_target, parsed_diff, was_snapped, is_valid_line):
                     lang = self._get_code_language(path)

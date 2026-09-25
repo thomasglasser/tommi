@@ -384,7 +384,8 @@ Hope this helps! See [guidelines] {docs}."""
             gemini_api_key="fake_key",
             github_repository="test/repo",
             pr_number=1,
-            model_name="auto"
+            model_name="auto",
+            enable_secondary_validation=False,
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
@@ -418,7 +419,8 @@ Hope this helps! See [guidelines] {docs}."""
             gemini_api_key="fake_key",
             github_repository="test/repo",
             pr_number=1,
-            model_name="auto"
+            model_name="auto",
+            enable_secondary_validation=False,
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
@@ -479,7 +481,8 @@ Hope this helps! See [guidelines] {docs}."""
             gemini_api_key="fake_key",
             github_repository="test/repo",
             pr_number=1,
-            model_name="auto"
+            model_name="auto",
+            enable_secondary_validation=False,
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
@@ -575,7 +578,8 @@ Hope this helps! See [guidelines] {docs}."""
             gemini_api_key="fake_key",
             github_repository="test/repo",
             pr_number=1,
-            model_name="auto"
+            model_name="auto",
+            enable_secondary_validation=False,
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
@@ -1007,7 +1011,8 @@ index 1111111..2222222 100644
             gemini_api_key="fake_key",
             github_repository="test/repo",
             pr_number=1,
-            model_name="auto"
+            model_name="auto",
+            enable_secondary_validation=False,
         )
 
         with patch("src.reviewer.genai.Client") as mock_client_cls, \
@@ -1374,7 +1379,9 @@ class TestFetchPrDiffFallback(unittest.TestCase):
             "severity": "SUGGESTION"
         }
         validated = reviewer._validate_comments([raw_comment], parsed)
-        self.assertEqual(len(validated), 0, "Self-referential call bug suggestion must be discarded completely")
+        self.assertEqual(len(validated), 1)
+        self.assertNotIn("```suggestion", validated[0]["body"])
+        self.assertIn("```java", validated[0]["body"])
 
     def test_validate_comments_discards_self_retracted_and_no_issue_comments(self):
         from src.diff_parser import parse_unified_diff
@@ -1425,113 +1432,6 @@ class TestFetchPrDiffFallback(unittest.TestCase):
         }
         validated_not_actionable = reviewer._validate_comments([raw_not_actionable], parsed)
         self.assertEqual(len(validated_not_actionable), 0, "Comment with actionable: False must be discarded")
-
-    def test_validate_comments_discards_layout_inversion_hallucinations(self):
-        import os
-        import tempfile
-        from unittest.mock import MagicMock
-        from src.diff_parser import parse_unified_diff
-        from src.repo_tools import WorkspaceInspector
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            # 1. Create a Java file where constructor IS ALREADY above static factories
-            java_path = os.path.join(tmpdir, "ItemHolder.java")
-            with open(java_path, "w", encoding="utf-8") as f:
-                f.write(
-                    "package com.example;\n"
-                    "public class ItemHolder {\n"
-                    "    protected ItemHolder(String key) {\n"
-                    "    }\n"
-                    "    public static ItemHolder createItem(String key) {\n"
-                    "        return new ItemHolder(key);\n"
-                    "    }\n"
-                    "    public void toStack() {\n"
-                    "    }\n"
-                    "}\n"
-                )
-
-            reviewer = TommiReviewer.__new__(TommiReviewer)
-            reviewer.inspector = WorkspaceInspector(tmpdir)
-
-            diff_text = (
-                "diff --git a/ItemHolder.java b/ItemHolder.java\n"
-                "--- a/ItemHolder.java\n"
-                "+++ b/ItemHolder.java\n"
-                "@@ -1,7 +1,9 @@\n"
-                "+package com.example;\n"
-                "+public class ItemHolder {\n"
-                "+    protected ItemHolder(String key) {\n"
-                "+    }\n"
-                "+    public static ItemHolder createItem(String key) {\n"
-                "+        return new ItemHolder(key);\n"
-                "+    }\n"
-                "+    public void toStack() {\n"
-                "+    }\n"
-                "+}\n"
-            )
-            parsed = parse_unified_diff(diff_text)
-
-            # Hallucinated comment claiming constructor should be above static factory
-            inversion_comment = {
-                "path": "ItemHolder.java",
-                "line": 8,
-                "body": (
-                    "According to our class layout rules, static factory methods (such as `createItem(...)`) "
-                    "must be placed directly below constructors and before instance methods. `toStack(...)` is an "
-                    "instance method and should remain below the static factories, but the constructor "
-                    "(`ItemHolder(...)`) should be placed directly above the static factory methods (`createItem(...)`)."
-                ),
-                "severity": "SUGGESTION"
-            }
-
-            validated = reviewer._validate_comments([inversion_comment], parsed)
-            self.assertEqual(
-                len(validated), 0,
-                "Layout inversion hallucination must be discarded when constructor is already above static factories"
-            )
-
-            # 2. Genuine layout violation (constructor actually below static factory)
-            broken_java_path = os.path.join(tmpdir, "BrokenHolder.java")
-            with open(broken_java_path, "w", encoding="utf-8") as f:
-                f.write(
-                    "package com.example;\n"
-                    "public class BrokenHolder {\n"
-                    "    public static BrokenHolder create(String key) {\n"
-                    "        return new BrokenHolder(key);\n"
-                    "    }\n"
-                    "    public BrokenHolder(String key) {\n"
-                    "    }\n"
-                    "}\n"
-                )
-
-            broken_diff_text = (
-                "diff --git a/BrokenHolder.java b/BrokenHolder.java\n"
-                "--- a/BrokenHolder.java\n"
-                "+++ b/BrokenHolder.java\n"
-                "@@ -1,7 +1,7 @@\n"
-                "+package com.example;\n"
-                "+public class BrokenHolder {\n"
-                "+    public static BrokenHolder create(String key) {\n"
-                "+        return new BrokenHolder(key);\n"
-                "+    }\n"
-                "+    public BrokenHolder(String key) {\n"
-                "+    }\n"
-                "+}\n"
-            )
-            broken_parsed = parse_unified_diff(broken_diff_text)
-
-            genuine_comment = {
-                "path": "BrokenHolder.java",
-                "line": 6,
-                "body": "According to our class layout rules, static factory methods must be placed directly below constructors.",
-                "severity": "SUGGESTION"
-            }
-
-            validated_genuine = reviewer._validate_comments([genuine_comment], broken_parsed)
-            self.assertEqual(
-                len(validated_genuine), 1,
-                "Genuine class layout violation must NOT be discarded"
-            )
 
     def test_validate_comments_discards_identical_no_op_suggestions(self):
         from src.diff_parser import parse_unified_diff
@@ -1588,283 +1488,164 @@ class TestFetchPrDiffFallback(unittest.TestCase):
             "Comment proposing actual changes must NOT be discarded"
         )
 
-    def test_validate_comments_discards_this_shadowing_hallucination(self):
-        import os
-        import tempfile
+    def test_verify_candidate_comments_filters_false_positives(self):
         from src.diff_parser import parse_unified_diff
-        from src.repo_tools import WorkspaceInspector
+        from src.rules_loader import LoadedRules
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            java_path = os.path.join(tmpdir, "ExtendedHolder.java")
-            with open(java_path, "w", encoding="utf-8") as f:
-                f.write(
-                    "package dev.thomasglasser.tommylib.api.registration;\n"
-                    "public class ExtendedHolder<R> {\n"
-                    "    private Holder<R> holder;\n"
-                    "    public boolean is(Holder<R> holder) {\n"
-                    "        bind(false);\n"
-                    "        return this.holder != null && this.holder.is(holder);\n"
-                    "    }\n"
-                    "}\n"
-                )
+        config = TommiConfig(github_token="fake", gemini_api_key="fake", github_repository="owner/repo", pr_number=1)
+        reviewer = TommiReviewer(config)
 
-            reviewer = TommiReviewer.__new__(TommiReviewer)
-            reviewer.inspector = WorkspaceInspector(tmpdir)
-
-            diff_text = (
-                "diff --git a/ExtendedHolder.java b/ExtendedHolder.java\n"
-                "--- a/ExtendedHolder.java\n"
-                "+++ b/ExtendedHolder.java\n"
-                "@@ -1,7 +1,7 @@\n"
-                "+package dev.thomasglasser.tommylib.api.registration;\n"
-                "+public class ExtendedHolder<R> {\n"
-                "+    private Holder<R> holder;\n"
-                "+    public boolean is(Holder<R> holder) {\n"
-                "+        bind(false);\n"
-                "+        return this.holder != null && this.holder.is(holder);\n"
-                "+    }\n"
-                "+}\n"
-            )
-            parsed = parse_unified_diff(diff_text)
-
-            # Hallucinated comment claiming this. is unnecessary despite parameter shadowing
-            shadowing_comment = {
+        candidate_comments = [
+            {
                 "path": "ExtendedHolder.java",
-                "line": 6,
-                "body": (
-                    "Unnecessary `this.` qualifiers on `this.holder`. There is no field shadowing or collision "
-                    "with holder since holder is a Holder<R> parameter and this.holder is of type Holder<R>.\n\n"
-                    "```suggestion\n"
-                    "        return holder != null && holder.is(holder);\n"
-                    "```"
-                ),
-                "severity": "SUGGESTION"
-            }
+                "line": 197,
+                "severity": "SUGGESTION",
+                "body": "Unnecessary `this.` qualifiers on `this.holder`.",
+                "is_valid_line": True,
+            },
+            {
+                "path": "ItemHolder.java",
+                "line": 42,
+                "severity": "SUGGESTION",
+                "body": "Constructor should be placed above static factories.",
+                "is_valid_line": True,
+            },
+            {
+                "path": "TommyLib.java",
+                "line": 4,
+                "severity": "WARNING",
+                "body": "Method bodies, even when empty, should not be collapsed into a single line.",
+                "is_valid_line": True,
+            },
+            {
+                "path": "RegistrationService.java",
+                "line": 15,
+                "severity": "WARNING",
+                "body": "createDataComponents should be simplified to only take String namespace.",
+                "is_valid_line": True,
+            },
+            {
+                "path": "FabricRegistrationService.java",
+                "line": 41,
+                "severity": "WARNING",
+                "body": "Consider composing or delegating to FabricRegistrar.",
+                "is_valid_line": True,
+            },
+            {
+                "path": "RealBug.java",
+                "line": 10,
+                "severity": "CRITICAL",
+                "body": "NullPointerException: player can be null on dedicated server.",
+                "is_valid_line": True,
+            },
+        ]
 
-            validated = reviewer._validate_comments([shadowing_comment], parsed)
-            self.assertEqual(
-                len(validated), 0,
-                "Comment alleging unnecessary this. on a shadowed parameter must be discarded"
+        mock_verdicts = [
+            {"index": 0, "keep": False, "reason": "Parameter shadows field, this. is mandatory"},
+            {"index": 1, "keep": False, "reason": "Constructor is already above static factories"},
+            {"index": 2, "keep": False, "reason": "Empty method on single line is enforced by Spotless"},
+            {"index": 3, "keep": False, "reason": "SPI interface must retain ResourceKey parameter"},
+            {"index": 4, "keep": False, "reason": "Delegation would break covariant return types"},
+            {"index": 5, "keep": True, "reason": "Genuine null safety bug"},
+        ]
+
+        with patch.object(reviewer, "_execute_review_generation", return_value=json.dumps(mock_verdicts)):
+            rules = LoadedRules(base_rules={}, local_rules={})
+            parsed = parse_unified_diff("diff --git a/RealBug.java b/RealBug.java\n+int x = 1;\n")
+            verified = reviewer._verify_candidate_comments(
+                candidate_comments,
+                rules=rules,
+                parsed_diff=parsed,
+                preferred_model="gemini-2.5-flash",
             )
 
-            # Genuine case where parameter is NOT shadowing
-            clean_java_path = os.path.join(tmpdir, "CleanHolder.java")
-            with open(clean_java_path, "w", encoding="utf-8") as f:
-                f.write(
-                    "package dev.thomasglasser.tommylib.api.registration;\n"
-                    "public class CleanHolder<R> {\n"
-                    "    private Holder<R> holder;\n"
-                    "    public boolean is(TagKey<R> tag) {\n"
-                    "        bind(false);\n"
-                    "        return this.holder != null && this.holder.is(tag);\n"
-                    "    }\n"
-                    "}\n"
-                )
+        self.assertEqual(len(verified), 1)
+        self.assertEqual(verified[0]["path"], "RealBug.java")
+        self.assertEqual(verified[0]["severity"], "CRITICAL")
 
-            clean_diff_text = (
-                "diff --git a/CleanHolder.java b/CleanHolder.java\n"
-                "--- a/CleanHolder.java\n"
-                "+++ b/CleanHolder.java\n"
-                "@@ -1,7 +1,7 @@\n"
-                "+package dev.thomasglasser.tommylib.api.registration;\n"
-                "+public class CleanHolder<R> {\n"
-                "+    private Holder<R> holder;\n"
-                "+    public boolean is(TagKey<R> tag) {\n"
-                "+        bind(false);\n"
-                "+        return this.holder != null && this.holder.is(tag);\n"
-                "+    }\n"
-                "+}\n"
-            )
-            clean_parsed = parse_unified_diff(clean_diff_text)
+    def test_verify_candidate_comments_fallback_on_model_error(self):
+        from src.rules_loader import LoadedRules
 
-            genuine_comment = {
-                "path": "CleanHolder.java",
-                "line": 6,
-                "body": (
-                    "Unnecessary `this.` qualifier on `this.holder`.\n\n"
-                    "```suggestion\n"
-                    "        return holder != null && holder.is(tag);\n"
-                    "```"
-                ),
-                "severity": "SUGGESTION"
-            }
+        config = TommiConfig(github_token="fake", gemini_api_key="fake", github_repository="owner/repo", pr_number=1)
+        reviewer = TommiReviewer(config)
 
-            validated_genuine = reviewer._validate_comments([genuine_comment], clean_parsed)
-            self.assertEqual(
-                len(validated_genuine), 1,
-                "Genuine unnecessary this. comment without shadowing must NOT be discarded"
-            )
+        candidates = [
+            {"path": "Test.java", "line": 5, "body": "Possible bug", "severity": "WARNING"}
+        ]
 
-    def test_validate_comments_discards_formatter_conflict_on_empty_method(self):
-        from src.diff_parser import parse_unified_diff
+        with patch.object(reviewer, "_execute_review_generation", side_effect=RuntimeError("API quota exhausted")):
+            rules = LoadedRules(base_rules={}, local_rules={})
+            verified = reviewer._verify_candidate_comments(candidates, rules=rules, parsed_diff=None)
+
+        # Falls back gracefully to preserving candidate comments
+        self.assertEqual(len(verified), 1)
+        self.assertEqual(verified[0]["body"], "Possible bug")
+
+    def test_verify_candidate_comments_disabled_via_config(self):
+        from src.rules_loader import LoadedRules
 
         config = TommiConfig(
             github_token="fake",
             gemini_api_key="fake",
-            github_repository="test/repo",
+            github_repository="owner/repo",
             pr_number=1,
-            model_name="auto",
+            enable_secondary_validation=False,
         )
         reviewer = TommiReviewer(config)
 
-        diff_text = (
-            "diff --git a/TommyLib.java b/TommyLib.java\n"
-            "--- a/TommyLib.java\n"
-            "+++ b/TommyLib.java\n"
-            "@@ -1,5 +1,5 @@\n"
-            " package dev.thomasglasser.tommylib;\n"
-            " public class TommyLib {\n"
-            "+    public static void init() {}\n"
-            " }\n"
-        )
-        parsed = parse_unified_diff(diff_text)
+        candidates = [
+            {"path": "Test.java", "line": 5, "body": "Issue", "severity": "WARNING"}
+        ]
 
-        # 1. Hallucinated comment complaining about collapsing empty method into single line
-        formatter_comment = {
-            "path": "TommyLib.java",
-            "line": 3,
-            "body": (
-                "Method bodies, even when empty, should not be collapsed into a single line. "
-                "Expand the curly braces onto separate lines or remove the method if it's truly dead code."
-            ),
-            "severity": "WARNING",
-        }
+        with patch.object(reviewer, "_execute_review_generation") as mock_exec:
+            rules = LoadedRules(base_rules={}, local_rules={})
+            verified = reviewer._verify_candidate_comments(candidates, rules=rules, parsed_diff=None)
+            mock_exec.assert_not_called()
 
-        validated = reviewer._validate_comments([formatter_comment], parsed)
-        self.assertEqual(
-            len(validated), 0,
-            "Comment demanding multi-line expansion of empty method bodies must be discarded as a formatter conflict"
-        )
+        self.assertEqual(len(verified), 1)
 
-        # 2. Suggestion expanding empty braces {} across multiple lines
-        expanding_sugg_comment = {
-            "path": "TommyLib.java",
-            "line": 3,
-            "body": (
-                "Format method body across multiple lines.\n\n"
-                "```suggestion\n"
-                "    public static void init() {\n"
-                "    }\n"
-                "```"
-            ),
-            "severity": "SUGGESTION",
-        }
+    def test_verify_candidate_comments_empty_candidates(self):
+        from src.rules_loader import LoadedRules
 
-        validated_sugg = reviewer._validate_comments([expanding_sugg_comment], parsed)
-        self.assertEqual(
-            len(validated_sugg), 0,
-            "Suggestion expanding single-line {} into multi-line empty block must be discarded"
-        )
+        config = TommiConfig(github_token="fake", gemini_api_key="fake", github_repository="owner/repo", pr_number=1)
+        reviewer = TommiReviewer(config)
 
-        # 3. Genuine comment with non-empty method body should not be discarded
-        non_empty_diff = (
-            "diff --git a/TommyLib.java b/TommyLib.java\n"
-            "--- a/TommyLib.java\n"
-            "+++ b/TommyLib.java\n"
-            "@@ -1,5 +1,5 @@\n"
-            " package dev.thomasglasser.tommylib;\n"
-            " public class TommyLib {\n"
-            "+    public static void init() { doSomething(); }\n"
-            " }\n"
-        )
-        non_empty_parsed = parse_unified_diff(non_empty_diff)
-        genuine_comment = {
-            "path": "TommyLib.java",
-            "line": 3,
-            "body": "Method body with statements should be formatted on separate lines.",
-            "severity": "WARNING",
-        }
-        validated_genuine = reviewer._validate_comments([genuine_comment], non_empty_parsed)
-        self.assertEqual(
-            len(validated_genuine), 1,
-            "Genuine formatting comment on non-empty method should not be discarded"
-        )
+        with patch.object(reviewer, "_execute_review_generation") as mock_exec:
+            rules = LoadedRules(base_rules={}, local_rules={})
+            verified = reviewer._verify_candidate_comments([], rules=rules, parsed_diff=None)
+            mock_exec.assert_not_called()
 
-    def test_validate_comments_discards_service_signature_simplification(self):
-        from src.diff_parser import parse_unified_diff
+        self.assertEqual(verified, [])
 
+    def test_review_diff_end_to_end_with_secondary_validation(self):
         config = TommiConfig(
             github_token="fake",
             gemini_api_key="fake",
-            github_repository="test/repo",
+            github_repository="owner/repo",
             pr_number=1,
-            model_name="auto",
+            enable_secondary_validation=True,
         )
         reviewer = TommiReviewer(config)
+        diff = "diff --git a/src/Foo.java b/src/Foo.java\n@@ -1,3 +1,3 @@\n+int a = 1;\n"
 
-        diff_text = (
-            "diff --git a/RegistrationService.java b/RegistrationService.java\n"
-            "--- a/RegistrationService.java\n"
-            "+++ b/RegistrationService.java\n"
-            "@@ -1,5 +1,5 @@\n"
-            " public interface RegistrationService {\n"
-            "+    Registrar.DataComponents createDataComponents(ResourceKey<Registry<DataComponentType<?>>> key, String namespace);\n"
-            " }\n"
-        )
-        parsed = parse_unified_diff(diff_text)
+        primary_comments = [
+            {"path": "src/Foo.java", "line": 1, "body": "Valid critical issue", "severity": "CRITICAL"},
+            {"path": "src/Foo.java", "line": 1, "body": "False positive observation", "severity": "SUGGESTION"},
+        ]
+        audit_verdicts = [
+            {"index": 0, "keep": True, "reason": "Confirmed bug"},
+            {"index": 1, "keep": False, "reason": "False positive"},
+        ]
 
-        comment = {
-            "path": "RegistrationService.java",
-            "line": 2,
-            "body": (
-                "Unlike `create(...)`, `createItems`, `createBlocks`, and `createEntities` do not take a `ResourceKey` parameter "
-                "because their registry key is implicit (e.g. `Registries.ITEM`). Similarly, `DataComponentType` registrations belong to `Registries.DATA_COMPONENT_TYPE`. "
-                "Unless there is a requirement to support non-standard component registries, `createDataComponents` should be simplified to only take `String namespace` "
-                "to remain consistent with the other specialized registrar factory methods.\n\n"
-                "```suggestion\n"
-                "    Registrar.DataComponents createDataComponents(String namespace);\n"
-                "```"
-            ),
-            "severity": "WARNING",
-        }
+        with patch.object(reviewer, "_execute_review_generation", side_effect=[
+            json.dumps(primary_comments),
+            json.dumps(audit_verdicts),
+        ]), patch("src.reviewer.resolve_candidate_models", return_value=["gemini-2.5-flash"]):
+            comments = reviewer.review_diff(diff)
 
-        validated = reviewer._validate_comments([comment], parsed)
-        self.assertEqual(
-            len(validated), 0,
-            "Comment suggesting stripping ResourceKey from createDataComponents SPI must be discarded"
-        )
-
-    def test_validate_comments_discards_specialized_registrar_flawed_delegation(self):
-        from src.diff_parser import parse_unified_diff
-
-        config = TommiConfig(
-            github_token="fake",
-            gemini_api_key="fake",
-            github_repository="test/repo",
-            pr_number=1,
-            model_name="auto",
-        )
-        reviewer = TommiReviewer(config)
-
-        diff_text = (
-            "diff --git a/FabricRegistrationService.java b/FabricRegistrationService.java\n"
-            "--- a/FabricRegistrationService.java\n"
-            "+++ b/FabricRegistrationService.java\n"
-            "@@ -40,7 +40,7 @@\n"
-            "     public static class FabricItemsRegistrar extends Registrar.Items {\n"
-            "+        private final Set<ItemHolder<?>> entries = new ObjectOpenHashSet<>();\n"
-            "     }\n"
-        )
-        parsed = parse_unified_diff(diff_text)
-
-        comment = {
-            "path": "FabricRegistrationService.java",
-            "line": 41,
-            "body": (
-                "While `ObjectOpenHashSet` is correct for holders like `ExtendedHolder` (since holders rely on value equality), "
-                "the concrete subclasses `FabricItemsRegistrar`, `FabricBlocksRegistrar`, `FabricDataComponentsRegistrar`, and `FabricEntitiesRegistrar` "
-                "duplicate this entire collection setup, registration wrapping, and `entries()` view logic.\n\n"
-                "Notice that `FabricRegistrar<T>` implements the exact registration and entry tracking behavior needed. Consider composing or delegating "
-                "to `FabricRegistrar` in the specialized registrars (or sharing default helper implementations where inheritance allows) to keep registration logic DRY."
-            ),
-            "severity": "WARNING",
-        }
-
-        validated = reviewer._validate_comments([comment], parsed)
-        self.assertEqual(
-            len(validated), 0,
-            "Comment suggesting flawed delegation to FabricRegistrar in specialized covariant registrars must be discarded"
-        )
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0]["body"], "Valid critical issue")
+        self.assertEqual(comments[0]["severity"], "CRITICAL")
 
 
 
