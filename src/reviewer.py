@@ -928,37 +928,26 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 3. **Trust Compiler & Build Verification**: All PRs are verified to compile and build cleanly via Gradle prior to review. NEVER claim there are compilation errors, syntax errors, duplicate method/field definitions, or missing types that the Java compiler would reject. If you think a method is defined twice, you are misreading a method invocation (e.g. inside an `if` condition) or an overload. Do NOT flag compiler errors.
 4. **Verify Full Method Scope for Variables**: NEVER report a parameter or variable as unused unless you have traced the entire method body and confirmed it is completely unreferenced. Check event postings (`NeoForge.EVENT_BUS.post(...)`), constructor arguments, method calls, lambda closures, and return values before alleging an unused parameter.
 5. **Verify Full Class Scope for Methods & Fields**: Surrounding source code for all modified files is provided above in the 'MODIFIED FILES SURROUNDING SOURCE CODE' section. NEVER claim a method, field, helper, or override is unused, never called, or missing without checking the entire class. If a method is called by another method in the class, overrides an interface/parent method, acts as a factory, or listens to events (e.g. `@SubscribeEvent`), it is actively used.
-6. **Avoid Before/After Inversion & Verify Member Order by Line Numbers**:
-   When code is moved or refactored in a diff (deleted from one location and added in another), evaluate the code strictly in its NEW, final position (`+` lines) and check the 'MODIFIED FILES SURROUNDING SOURCE CODE'. NEVER instruct the author to perform a relocation or refactoring that the commit/PR has just performed (e.g. telling the author to move a constructor above static factories or move an instance method below static factories when the commit just moved them there). Check the actual line numbers in the surrounding code: if the constructor line number is lower than the static factory line number, the order is strictly correct. Do NOT report it!
-7. **Parameter Shadowing & 'this.' Disambiguation**:
-   In Java, ANY method parameter or local variable sharing a field's name strictly shadows that field, regardless of type. If a method parameter is named `holder`, accessing `this.holder` is MANDATORY to access the class field. NEVER claim `this.` is unnecessary or suggest removing it when a parameter or local variable has the same name, and NEVER suggest changes that produce self-referential calls (e.g. `holder.is(holder)` or `x.equals(x)`).
-8. **Formatter Precedence & Empty Method Bodies**:
-   Single-line empty method bodies (`{{}}`) such as `public static void init() {{}}`, no-op callbacks, or empty constructors are standard, clean, and enforced by automated repository formatters (Spotless / Immaculate). NEVER instruct authors to expand empty `{{}}` blocks across multiple lines, and NEVER flag empty initialization methods (`init()`, lifecycle hooks) as dead code.
-9. **Service SPI Signatures & Covariant Registrars**:
-   - NEVER suggest stripping parameters (such as `ResourceKey` registry keys) from low-level service interfaces (SPIs like `RegistrationService`, e.g. `createDataComponents`) to force consistency with other factory methods; low-level SPIs require full parameterization to support non-standard registries (e.g. custom component registries).
-   - NEVER suggest composing or delegating from specialized registrars (`ItemsRegistrar`, `BlocksRegistrar`) to a base generic registrar (`FabricRegistrar<T>`); generic registrars return `ExtendedHolder<T, I>`, which breaks covariant return types (`ItemHolder<I>`, `BlockHolder<B>`) and forces redundant allocations and re-wrapping.
-10. **Utility & Constants Classes (No Private Constructors)**:
-   Utility and constants classes contain only static members (static methods, constants, factories) and do NOT need private constructors. IntelliJ IDEA natively recognizes classes with only static members as utility classes. NEVER instruct authors to add a private constructor (e.g. `private MyConstants() {{}}`) to prevent instantiation.
-11. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-12. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
+6. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
+7. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
    ```suggestion
    exact replacement code
    ```
-13. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
+8. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
    If while drafting a comment you realize there is actually no genuine issue (e.g. you notice parameter shadowing, intentional fallback, or that a rule does not apply):
    - Conclude the comment body with `[DISMISSED]` (e.g., `...So this is mandatory! [DISMISSED]`), or set `"actionable": false`.
    - The review engine will automatically recognize that you changed your mind and will discard the comment so it does not pollute the review!
    - If all candidate issues turn out to be non-issues, return an empty array `[]`.
-14. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
-15. Each object must have:
+9. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+10. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. **CRITICAL**: Read the line number directly from the line prefix in the annotated diff (e.g. `  189: + ...` or `  190:   ...`). Do NOT count or estimate line numbers.
    - `target_code`: The exact line or distinctive snippet of code from the diff that this comment targets.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment (or conclude with `[DISMISSED]` if you changed your mind).
    - `actionable`: Boolean (`true` by default, or `false` if dismissed as a non-issue).
-16. If there are no issues found, return an empty array `[]`.
-17. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
+11. If there are no issues found, return an empty array `[]`.
+12. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
 """
 
     def _align_suggestion_indentation(self, body: str, path: str, line: int, parsed_diff: ParsedDiff) -> str:
@@ -1216,11 +1205,10 @@ Rigorously review EACH draft comment above against the repository rules and the 
 Your goal is to ensure 100% precision: eliminate false positives, hallucinations, rule contradictions, and bad advice!
 
 For every draft comment, evaluate:
-1. Rule Compliance: Does the comment strictly adhere to the repository rules?
-   - Reject comments that contradict rules (e.g. demanding multi-line expansion of empty '{{}}' methods, flagging active static 'init()' hooks as dead code, suggesting adding private constructors to utility/constants classes, suggesting stripping 'ResourceKey' from service SPIs, suggesting flawed delegation that breaks covariant return types, or claiming member order is wrong when line numbers confirm it is correct).
-2. Bug & Type Safety: Would following the advice break compilation, break type covariance, or introduce bugs (e.g. stripping 'this.' when a parameter shadows a field)?
+1. Rule Compliance: Does the comment strictly adhere to the repository rules defined above? Reject comments that contradict any repository rule, architectural pattern, or code style standard.
+2. Bug & Type Safety: Would following the advice break compilation, break type safety or covariance, or introduce bugs or regressions?
 3. Factual Accuracy: Does the code context actually support the comment's claims?
-4. Genuine Actionability: Is this a genuine defect or concrete improvement? Reject pedantic nitpicks or non-actionable observations.
+4. Genuine Actionability: Is this a genuine defect or concrete improvement? Reject pedantic nitpicks, invalid advice, or non-actionable observations.
 
 For each comment, output a decision object:
 - "index": The index of the draft comment (0, 1, 2, ...).
