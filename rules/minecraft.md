@@ -24,6 +24,8 @@
 * **SavedData Serialization**: Do NOT flag `.getOrThrow()` calls on `Codec` operations within `SavedData` `save()` or `load()` methods as unhandled exceptions or dangerous; Minecraft's `SavedData` system handles serialization errors internally.
 * **Holder Usage**: ALWAYS prefer `Holder<T>` over raw object references, `ResourceLocation`s, or string IDs when referencing data-driven registry entries.
 * **Data-Driven Design with Tags**: NEVER hardcode specific items or blocks in logic. Create and use tags (e.g., `hibiscus_bushes`, `removed_by_rinsing`) to ensure extensibility and mod interoperability.
+* **Conventional Tag Holder Helpers**: In tag holder classes that declare conventional (`"c"`) tags, ALWAYS define a `createC(String path)` helper delegating to the mod's conventional tag utility. Do NOT pass conventional namespace constants directly in field declarations.
+* **Empty Datagen Provider Elimination**: Do NOT create or register empty datagen tag provider classes when no tags are defined for that registry. Pass `CompletableFuture.completedFuture(null)` for unused provider dependencies.
 * **Constants**: Use vanilla and NeoForge constants wherever possible (e.g., `Block` constants in `setBlock`, `SharedConstants.TICKS_PER_SECOND` for AI timeouts/cooldowns).
 * **Built-in & Library Utils**: Leverage existing library utilities (such as `TommyLib`, `AnimationUtils`, `StreamCodecs`) instead of duplicating functionality.
 * **Data Attachments**:

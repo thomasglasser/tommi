@@ -7,6 +7,7 @@
 * **Java Naming Conventions**: Strictly follow standard Java conventions (camelCase methods/variables, PascalCase types).
 * **Constant Naming**: `public static final` (PSF) fields MUST use `CAPITAL_SNAKE_CASE`.
 * **Pluralization**: Be accurate with plurals (e.g., `miraculouses`, `options` instead of `option` for collections).
+* **Accessor Naming in Holder & Registry Types**: In registration, holder, and data wrapper objects, prefer naming accessors after the property itself (e.g., `id()`, `key()`, `registry()`, `entries()`, `namespace()`) omitting the `get` prefix, matching Java record and modern API conventions.
 
 ## 2. Layout & Structure
 * **Class Layout & Member Sequence**:
@@ -23,7 +24,9 @@
   * Use `else if` chains rather than isolated `if` statements when branching on the same condition.
   * **Sequential Fallback Checks**: Do NOT suggest converting sequential `if` fallback assignments (e.g., `if (x == null) x = ...; if (x == null) x = ...;`) into `else if` chains; sequential execution is required to evaluate previous fallback assignments.
   * **Compound Condition Branching**: Do NOT flag condition checks in `else` or `else if` branches as redundant when the preceding `if` statement uses a compound boolean condition (`&&` or `||`); entering the `else` branch only implies the overall condition evaluated to false, not which specific sub-condition failed.
+* **Early Guard Returns over Deep Nesting**: Prefer early guard returns (`if (player == null) return Vec3.ZERO;`) over wrapping entire method bodies inside large `if (obj != null)` blocks to keep control flow flat and readable.
 * **Spacing**: Avoid unnecessary blank lines. Keep closely related logic tightly grouped.
+* **Section Comment Cleanliness**: Do NOT use decorative ASCII borders, divider lines, or multi-line section banners (e.g., `// ==========================================`). Use concise, plain single-line section headers (e.g., `// Side-safe accessors`, `// Shaders`, `// Assets`).
 
 ## 3. Code Cleanliness & DRY
 * **No Fully Qualified Inline Names**: Import classes at the top of the file rather than referencing them inline.
@@ -33,6 +36,7 @@
 * **Verify Implementation Before Flagging**: NEVER flag utility methods, helper functions, or API calls as incorrect, redundant, or side-unsafe without first inspecting their internal implementation. Always verify the actual logic rather than assuming behavior based on method signatures or naming conventions.
 * **Inlining**: Inline variables and methods that are only used once or merely wrap a single call.
 * **DRY (Don't Repeat Yourself)**: Extract duplicated logic into parent classes or utility methods.
+* **Abstract Base Class Specialization**: When multiple concrete implementations of an extensible interface operate on a specialized holder subclass, extract an abstract base class that performs the `instanceof` check and cast centrally, delegating to protected typed methods.
 * **No Redundant Overrides**: If an overridden method only calls `super.method()`, remove the override entirely.
 * **Remove Dead Code**: NEVER commit commented-out code, unused variables, or unused generic parameters.
 * **No `var`**: Do NOT use the `var` keyword in Java. Explicitly define variable types.
