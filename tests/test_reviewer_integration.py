@@ -1536,6 +1536,62 @@ class TestFetchPrDiffFallback(unittest.TestCase):
                 "Genuine class layout violation must NOT be discarded"
             )
 
+    def test_validate_comments_discards_identical_no_op_suggestions(self):
+        from src.diff_parser import parse_unified_diff
+
+        reviewer = TommiReviewer.__new__(TommiReviewer)
+        reviewer.inspector = None
+
+        diff_text = (
+            "diff --git a/TommyLibServices.java b/TommyLibServices.java\n"
+            "--- a/TommyLibServices.java\n"
+            "+++ b/TommyLibServices.java\n"
+            "@@ -10,4 +10,4 @@\n"
+            "+        final T loadedService = ServiceLoader.load(clazz)\n"
+            "+                .findFirst()\n"
+            "+                .orElseThrow(() -> new IllegalStateException(\"Failed to load service for \" + clazz.getName()));\n"
+            "+        return loadedService;\n"
+        )
+        parsed = parse_unified_diff(diff_text)
+
+        # Comment proposing identical replacement to what line 12 already contains
+        noop_comment = {
+            "path": "TommyLibServices.java",
+            "line": 12,
+            "body": (
+                "Throw an `IllegalStateException` rather than a `NullPointerException`.\n\n"
+                "```suggestion\n"
+                "                .orElseThrow(() -> new IllegalStateException(\"Failed to load service for \" + clazz.getName()));\n"
+                "```"
+            ),
+            "severity": "WARNING",
+        }
+
+        validated = reviewer._validate_comments([noop_comment], parsed)
+        self.assertEqual(
+            len(validated), 0,
+            "Comment proposing identical suggestion to target code must be discarded as no-op"
+        )
+
+        # Valid comment proposing different code
+        diff_comment = {
+            "path": "TommyLibServices.java",
+            "line": 12,
+            "body": (
+                "Throw custom exception.\n\n"
+                "```suggestion\n"
+                "                .orElseThrow(() -> new ServiceLoadException(\"Failed to load service for \" + clazz.getName()));\n"
+                "```"
+            ),
+            "severity": "WARNING",
+        }
+        validated_diff = reviewer._validate_comments([diff_comment], parsed)
+        self.assertEqual(
+            len(validated_diff), 1,
+            "Comment proposing actual changes must NOT be discarded"
+        )
+
+
 
 
 

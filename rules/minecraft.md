@@ -22,6 +22,11 @@
 * **ItemStack Equality & Collections**: Do NOT flag `ObjectOpenHashSet<ItemStack>` or `ReferenceOpenHashSet<ItemStack>` as using flawed equality checks; in Minecraft 1.21+, `ItemStack` does not override `equals()` or `hashCode()`, so sets compare `ItemStack` instances by identity.
 
 * **SavedData Serialization**: Do NOT flag `.getOrThrow()` calls on `Codec` operations within `SavedData` `save()` or `load()` methods as unhandled exceptions or dangerous; Minecraft's `SavedData` system handles serialization errors internally.
+* **Registry Lookups via BuiltInRegistries (`ResourceKey` vs `ResourceLocation`)**:
+  * In Minecraft 1.21.x (and pre-26.x), `ResourceKey#registry()` returns a `ResourceLocation` representing the registry ID, NOT a `ResourceKey`.
+  * `BuiltInRegistries.REGISTRY.get(ResourceLocation)` is the canonical lookup for vanilla built-in registries.
+  * Calling `BuiltInRegistries.REGISTRY.get(key.registry())` and `BuiltInRegistries.REGISTRY.get(registryKey.location())` both pass valid, identical `ResourceLocation`s and are completely consistent. NEVER flag `registryKey.location()` as flawed, dangerous, or failing to retrieve a registry.
+  * NEVER suggest passing `registryKey` (`ResourceKey<? extends Registry<V>>`) directly into `BuiltInRegistries.REGISTRY.get(...)`, as Java generic invariance will cause compilation errors.
 * **ItemLike#asItem() for Block vs. Item Holders**: In Minecraft, both `Item` and `Block` implement `ItemLike`. For an `Item` holder (e.g., `ItemHolder<T extends Item>`), `get()` or `value()` directly returns an `Item`, so `asItem()` returning `get()` is exact and complete. For a `Block` holder (e.g., `BlockHolder<T extends Block>`), `get()` returns a `Block`, which must call `get().asItem()` to retrieve the corresponding item. NEVER flag `ItemHolder#asItem()` as inconsistent with `BlockHolder#asItem()` or suggest calling `.asItem()` on an item.
 * **Holder Usage**: ALWAYS prefer `Holder<T>` over raw object references, `ResourceLocation`s, or string IDs when referencing data-driven registry entries.
 * **Data-Driven Design with Tags**: NEVER hardcode specific items or blocks in logic. Create and use tags (e.g., `hibiscus_bushes`, `removed_by_rinsing`) to ensure extensibility and mod interoperability.

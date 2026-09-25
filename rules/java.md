@@ -1,7 +1,11 @@
 # Java Standards & Language Conventions
 
 ## 1. Collections & FastUtil
-* **Avoid Default Collections**: Avoid standard `ArrayList` and `HashMap` in favor of FastUtil or Guava equivalents (e.g., `ObjectArrayList`, `ReferenceOpenHashSet`, `Object2ObjectOpenHashMap`) to minimize boxing and memory overhead.
+* **Avoid Default Collections**: Avoid standard `ArrayList` and `HashMap` in favor of FastUtil or Guava equivalents (e.g., `ObjectArrayList`, `ObjectOpenHashSet`, `Object2ObjectOpenHashMap`) to minimize boxing and memory overhead.
+* **ObjectOpenHashSet vs. ReferenceOpenHashSet for Value Equality**:
+  * `ObjectOpenHashSet` is a standard FastUtil set that uses `equals()` and `hashCode()`.
+  * Do NOT suggest replacing `ObjectOpenHashSet` with `ReferenceOpenHashSet` for objects that implement value-based `equals()` and `hashCode()` (such as `ExtendedHolder`, `ResourceKey`, `ResourceLocation`, or custom data wrappers).
+  * Reserve `ReferenceOpenHashSet` strictly for objects that rely on reference/identity equality (`==`) or do not override `equals()`. Using `ObjectOpenHashSet` for holders and registry wrappers is correct and preserves equality contracts.
 * **Immutability for Public APIs**: ALWAYS prefer Guava immutable collection types (`ImmutableList`, `ImmutableSet`, `ImmutableMap`) or custom unmodifiable wrapper classes that clearly communicate immutability in their class name/API (e.g., `ImmutableCollectionView`) for public APIs. Custom immutable collection views are completely acceptable as long as their immutability is clear. NEVER use or suggest raw `Collections.unmodifiable*` wrappers that return generic mutable `Collection<E>` / `List<E>` types as API signatures.
 * **LinkedHashSet & Sequenced Collections**: Do NOT flag standard `LinkedHashSet` as a violation of FastUtil collection rules when sequenced operations (such as `reversed()`) or `SequencedSet` compatibility are required; FastUtil's `ObjectLinkedOpenHashSet` does not support these methods.
 

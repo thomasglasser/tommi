@@ -1272,8 +1272,26 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
                     is_valid_line = True
                     was_snapped = True
 
-            # 3. Suggestion safety verification
+            # 3. Suggestion safety verification & no-op suggestion discard
             if "```suggestion" in body:
+                # Discard no-op / redundant suggestions where target line already matches suggested code
+                if path in parsed_diff.line_contents and line in parsed_diff.line_contents[path]:
+                    sugg_match = re.search(r"```suggestion\r?\n(.*?)\r?\n```", body, re.DOTALL)
+                    if sugg_match:
+                        sugg_code = sugg_match.group(1).strip()
+                        sugg_lines = [l.strip() for l in sugg_code.splitlines() if l.strip()]
+                        if sugg_lines:
+                            target_lines = [
+                                parsed_diff.line_contents[path].get(line + idx, "").strip()
+                                for idx in range(len(sugg_lines))
+                            ]
+                            if target_lines == sugg_lines:
+                                logger.info(
+                                    f"Discarding redundant / no-op suggestion comment on '{path}:{line}' "
+                                    f"(target code already matches suggested code): {body[:60]}..."
+                                )
+                                continue
+
                 if not self._is_suggestion_safe(body, path, line, extracted_target, parsed_diff, was_snapped, is_valid_line):
                     lang = self._get_code_language(path)
                     body = re.sub(r"```suggestion\b", f"```{lang}", body)
