@@ -20,6 +20,9 @@
 * **Item & Inventory Searches**: Do NOT flag entity or block-entity inventory scans as redundant or suggest early loop termination (`break`, `return`, or `if (!found)` guards); item stacks with matching IDs or data components can be split, duplicated, or distributed across multiple inventories and entities.
 
 * **ItemStack Equality & Collections**: Do NOT flag `ObjectOpenHashSet<ItemStack>` or `ReferenceOpenHashSet<ItemStack>` as using flawed equality checks; in Minecraft 1.21+, `ItemStack` does not override `equals()` or `hashCode()`, so sets compare `ItemStack` instances by identity.
+* **Registry Singletons vs. Holders in FastUtil Collections**:
+  * For collections of direct registry singletons (`Item`, `Block`, `MobEffect`, `EntityType`), `ReferenceOpenHashSet` / `Reference2ObjectOpenHashMap` is preferred for maximum performance.
+  * For collections of holders or keys (`ExtendedHolder`, `Holder`, `ResourceKey`), `ObjectOpenHashSet` MUST be used because holders/keys rely on value equality (`equals()` / `hashCode()`).
 
 * **SavedData Serialization**: Do NOT flag `.getOrThrow()` calls on `Codec` operations within `SavedData` `save()` or `load()` methods as unhandled exceptions or dangerous; Minecraft's `SavedData` system handles serialization errors internally.
 * **Registry Lookups via BuiltInRegistries (`ResourceKey` vs `ResourceLocation`)**:
