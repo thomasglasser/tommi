@@ -19,8 +19,16 @@ from src.local import (
 logger = logging.getLogger("tommi.cli")
 
 
+class TommiArgumentParser(argparse.ArgumentParser):
+    def parse_known_args(self, args=None, namespace=None):
+        namespace, remaining = super().parse_known_args(args=args, namespace=namespace)
+        if getattr(namespace, "paths", None) and namespace.paths and namespace.paths[0] == "review":
+            namespace.paths.pop(0)
+        return namespace, remaining
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = TommiArgumentParser(
         prog="tommi",
         description="🤖 T.O.M.M.I. — AI-Powered Automated Code Reviewer (Local CLI)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -36,17 +44,10 @@ Examples:
   tommi review --fail-on warning    # Exit with code 1 if warnings or critical issues found
         """,
     )
-
-    subparsers = parser.add_subparsers(dest="command", help="Command to execute")
-
-    # 'review' subcommand
-    review_parser = subparsers.add_parser("review", help="Run local AI code review on git changes")
-    _add_review_arguments(review_parser)
-
-    # Also add review arguments to the root parser so `tommi --staged` works without typing `review`
+    parser.set_defaults(command="review")
     _add_review_arguments(parser)
-
     return parser
+
 
 
 def _add_review_arguments(p: argparse.ArgumentParser) -> None:

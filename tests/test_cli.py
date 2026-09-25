@@ -30,6 +30,18 @@ class TestCli(unittest.TestCase):
         args = parser.parse_args(["-o", "report.md"])
         self.assertEqual(args.output, "report.md")
 
+    def test_parser_paths_with_and_without_review(self):
+        parser = build_parser()
+        args1 = parser.parse_args(["review", "src/Foo.java"])
+        self.assertEqual(args1.paths, ["src/Foo.java"])
+
+        args2 = parser.parse_args(["src/Foo.java"])
+        self.assertEqual(args2.paths, ["src/Foo.java"])
+
+        args3 = parser.parse_args(["review"])
+        self.assertEqual(args3.paths, [])
+
+
     @patch("src.cli.get_git_root")
     def test_main_not_in_git_repo_fails(self, mock_get_root):
         mock_get_root.return_value = None
