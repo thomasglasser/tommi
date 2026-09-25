@@ -1374,10 +1374,7 @@ class TestFetchPrDiffFallback(unittest.TestCase):
             "severity": "SUGGESTION"
         }
         validated = reviewer._validate_comments([raw_comment], parsed)
-        self.assertEqual(len(validated), 1)
-        # Should convert ```suggestion into ```java because holder.is(holder) is an unsafe self-referential call
-        self.assertNotIn("```suggestion", validated[0]["body"])
-        self.assertIn("```java", validated[0]["body"])
+        self.assertEqual(len(validated), 0, "Self-referential call bug suggestion must be discarded completely")
 
     def test_validate_comments_discards_self_retracted_and_no_issue_comments(self):
         from src.diff_parser import parse_unified_diff
@@ -1590,6 +1587,114 @@ class TestFetchPrDiffFallback(unittest.TestCase):
             len(validated_diff), 1,
             "Comment proposing actual changes must NOT be discarded"
         )
+
+    def test_validate_comments_discards_this_shadowing_hallucination(self):
+        import os
+        import tempfile
+        from src.diff_parser import parse_unified_diff
+        from src.repo_tools import WorkspaceInspector
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            java_path = os.path.join(tmpdir, "ExtendedHolder.java")
+            with open(java_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "package dev.thomasglasser.tommylib.api.registration;\n"
+                    "public class ExtendedHolder<R> {\n"
+                    "    private Holder<R> holder;\n"
+                    "    public boolean is(Holder<R> holder) {\n"
+                    "        bind(false);\n"
+                    "        return this.holder != null && this.holder.is(holder);\n"
+                    "    }\n"
+                    "}\n"
+                )
+
+            reviewer = TommiReviewer.__new__(TommiReviewer)
+            reviewer.inspector = WorkspaceInspector(tmpdir)
+
+            diff_text = (
+                "diff --git a/ExtendedHolder.java b/ExtendedHolder.java\n"
+                "--- a/ExtendedHolder.java\n"
+                "+++ b/ExtendedHolder.java\n"
+                "@@ -1,7 +1,7 @@\n"
+                "+package dev.thomasglasser.tommylib.api.registration;\n"
+                "+public class ExtendedHolder<R> {\n"
+                "+    private Holder<R> holder;\n"
+                "+    public boolean is(Holder<R> holder) {\n"
+                "+        bind(false);\n"
+                "+        return this.holder != null && this.holder.is(holder);\n"
+                "+    }\n"
+                "+}\n"
+            )
+            parsed = parse_unified_diff(diff_text)
+
+            # Hallucinated comment claiming this. is unnecessary despite parameter shadowing
+            shadowing_comment = {
+                "path": "ExtendedHolder.java",
+                "line": 6,
+                "body": (
+                    "Unnecessary `this.` qualifiers on `this.holder`. There is no field shadowing or collision "
+                    "with holder since holder is a Holder<R> parameter and this.holder is of type Holder<R>.\n\n"
+                    "```suggestion\n"
+                    "        return holder != null && holder.is(holder);\n"
+                    "```"
+                ),
+                "severity": "SUGGESTION"
+            }
+
+            validated = reviewer._validate_comments([shadowing_comment], parsed)
+            self.assertEqual(
+                len(validated), 0,
+                "Comment alleging unnecessary this. on a shadowed parameter must be discarded"
+            )
+
+            # Genuine case where parameter is NOT shadowing
+            clean_java_path = os.path.join(tmpdir, "CleanHolder.java")
+            with open(clean_java_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "package dev.thomasglasser.tommylib.api.registration;\n"
+                    "public class CleanHolder<R> {\n"
+                    "    private Holder<R> holder;\n"
+                    "    public boolean is(TagKey<R> tag) {\n"
+                    "        bind(false);\n"
+                    "        return this.holder != null && this.holder.is(tag);\n"
+                    "    }\n"
+                    "}\n"
+                )
+
+            clean_diff_text = (
+                "diff --git a/CleanHolder.java b/CleanHolder.java\n"
+                "--- a/CleanHolder.java\n"
+                "+++ b/CleanHolder.java\n"
+                "@@ -1,7 +1,7 @@\n"
+                "+package dev.thomasglasser.tommylib.api.registration;\n"
+                "+public class CleanHolder<R> {\n"
+                "+    private Holder<R> holder;\n"
+                "+    public boolean is(TagKey<R> tag) {\n"
+                "+        bind(false);\n"
+                "+        return this.holder != null && this.holder.is(tag);\n"
+                "+    }\n"
+                "+}\n"
+            )
+            clean_parsed = parse_unified_diff(clean_diff_text)
+
+            genuine_comment = {
+                "path": "CleanHolder.java",
+                "line": 6,
+                "body": (
+                    "Unnecessary `this.` qualifier on `this.holder`.\n\n"
+                    "```suggestion\n"
+                    "        return holder != null && holder.is(tag);\n"
+                    "```"
+                ),
+                "severity": "SUGGESTION"
+            }
+
+            validated_genuine = reviewer._validate_comments([genuine_comment], clean_parsed)
+            self.assertEqual(
+                len(validated_genuine), 1,
+                "Genuine unnecessary this. comment without shadowing must NOT be discarded"
+            )
+
 
 
 

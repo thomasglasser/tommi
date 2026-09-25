@@ -921,26 +921,28 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 5. **Verify Full Class Scope for Methods & Fields**: Surrounding source code for all modified files is provided above in the 'MODIFIED FILES SURROUNDING SOURCE CODE' section. NEVER claim a method, field, helper, or override is unused, never called, or missing without checking the entire class. If a method is called by another method in the class, overrides an interface/parent method, acts as a factory, or listens to events (e.g. `@SubscribeEvent`), it is actively used.
 6. **Avoid Before/After Inversion & Verify Member Order by Line Numbers**:
    When code is moved or refactored in a diff (deleted from one location and added in another), evaluate the code strictly in its NEW, final position (`+` lines) and check the 'MODIFIED FILES SURROUNDING SOURCE CODE'. NEVER instruct the author to perform a relocation or refactoring that the commit/PR has just performed (e.g. telling the author to move a constructor above static factories or move an instance method below static factories when the commit just moved them there). Check the actual line numbers in the surrounding code: if the constructor line number is lower than the static factory line number, the order is strictly correct. Do NOT report it!
-7. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-8. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
+7. **Parameter Shadowing & 'this.' Disambiguation**:
+   In Java, ANY method parameter or local variable sharing a field's name strictly shadows that field, regardless of type. If a method parameter is named `holder`, accessing `this.holder` is MANDATORY to access the class field. NEVER claim `this.` is unnecessary or suggest removing it when a parameter or local variable has the same name, and NEVER suggest changes that produce self-referential calls (e.g. `holder.is(holder)` or `x.equals(x)`).
+8. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
+9. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
    ```suggestion
    exact replacement code
    ```
-9. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
+10. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
    If while drafting a comment you realize there is actually no genuine issue (e.g. you notice parameter shadowing, intentional fallback, or that a rule does not apply):
    - Conclude the comment body with `[DISMISSED]` (e.g., `...So this is mandatory! [DISMISSED]`), or set `"actionable": false`.
    - The review engine will automatically recognize that you changed your mind and will discard the comment so it does not pollute the review!
    - If all candidate issues turn out to be non-issues, return an empty array `[]`.
-10. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
-11. Each object must have:
+11. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+12. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. **CRITICAL**: Read the line number directly from the line prefix in the annotated diff (e.g. `  189: + ...` or `  190:   ...`). Do NOT count or estimate line numbers.
    - `target_code`: The exact line or distinctive snippet of code from the diff that this comment targets.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment (or conclude with `[DISMISSED]` if you changed your mind).
    - `actionable`: Boolean (`true` by default, or `false` if dismissed as a non-issue).
-12. If there are no issues found, return an empty array `[]`.
-13. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
+13. If there are no issues found, return an empty array `[]`.
+14. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
 """
 
     def _align_suggestion_indentation(self, body: str, path: str, line: int, parsed_diff: ParsedDiff) -> str:
@@ -1211,6 +1213,107 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 
         return False
 
+    def _get_enclosing_method_parameters(self, lines: List[str], target_line: int) -> set[str]:
+        """
+        Finds the method enclosing target_line (1-indexed) in a Java source file
+        and returns the set of parameter names declared by that method.
+        """
+        if target_line < 1 or target_line > len(lines):
+            return set()
+
+        header_lines = []
+        found_signature = False
+        for i in range(target_line - 1, max(-1, target_line - 60), -1):
+            line_str = lines[i].strip()
+            if re.search(r"\b(?:class|interface|enum|record)\s+\w+", line_str) and "(" not in line_str:
+                break
+            header_lines.insert(0, line_str)
+            if "(" in line_str:
+                found_signature = True
+                break
+
+        if not found_signature:
+            return set()
+
+        full_header = " ".join(header_lines)
+        m = re.search(r"\b([a-zA-Z0-9_]+)\s*\(([^)]*)\)", full_header)
+        if not m:
+            return set()
+
+        param_str = m.group(2).strip()
+        if not param_str:
+            return set()
+
+        param_names = set()
+        raw_params = []
+        curr = []
+        depth = 0
+        for ch in param_str:
+            if ch == '<':
+                depth += 1
+            elif ch == '>':
+                depth -= 1
+            elif ch == ',' and depth == 0:
+                raw_params.append("".join(curr).strip())
+                curr = []
+                continue
+            curr.append(ch)
+        if curr:
+            raw_params.append("".join(curr).strip())
+
+        for p in raw_params:
+            words = [w for w in re.split(r"[\s\[\]]+", p.strip()) if w and not w.startswith("@")]
+            if words:
+                param_name = words[-1]
+                if re.match(r"^[a-zA-Z0-9_]+$", param_name):
+                    param_names.add(param_name)
+
+        return param_names
+
+    def _is_this_shadowing_hallucination(self, path: str, body: str, line: Optional[int] = None) -> bool:
+        """
+        Detects false-positive comments alleging unnecessary 'this.' qualifiers when
+        the accessed member name is actually shadowed by a parameter of the enclosing method.
+        """
+        if not path or not path.endswith(".java") or not getattr(self, "inspector", None) or line is None:
+            return False
+
+        body_lower = body.lower()
+        if "this." not in body_lower and "this prefix" not in body_lower and "this qualifier" not in body_lower:
+            return False
+
+        removal_cues = ["unnecessary", "redundant", "avoid", "remove", "omit", "do not use", "qualifier", "no field shadowing"]
+        if not any(cue in body_lower for cue in removal_cues):
+            return False
+
+        resolved_path = self.inspector._resolve_safe_path(path)
+        if not resolved_path or not os.path.isfile(resolved_path):
+            return False
+
+        try:
+            with open(resolved_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+        except Exception:
+            return False
+
+        if line < 1 or line > len(lines):
+            return False
+
+        target_line_text = lines[line - 1]
+        this_matches = set(re.findall(r"\bthis\.([a-zA-Z0-9_]+)\b", target_line_text))
+        if not this_matches:
+            this_matches = set(re.findall(r"\bthis\.([a-zA-Z0-9_]+)\b", body))
+
+        if not this_matches:
+            return False
+
+        param_names = self._get_enclosing_method_parameters(lines, line)
+        for var_name in this_matches:
+            if var_name in param_names:
+                return True
+
+        return False
+
     def _validate_comments(self, raw_comments: List[Dict[str, Any]], parsed_diff: ParsedDiff) -> List[Dict[str, Any]]:
         severity_rank = {
             "CRITICAL": 1,
@@ -1238,6 +1341,11 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
             # Discard before/after layout inversion hallucinations where class members are already correctly ordered
             if self._is_layout_inversion_hallucination(path, body, line):
                 logger.info(f"Discarding layout inversion hallucination on '{path}:{line}': {body[:60]}...")
+                continue
+
+            # Discard false positive comments attacking 'this.' when 'this.' resolves parameter shadowing
+            if self._is_this_shadowing_hallucination(path, body, line):
+                logger.info(f"Discarding false positive on '{path}:{line}': 'this.' is mandatory due to parameter shadowing: {body[:60]}...")
                 continue
 
             # Ensure line number is a positive int
@@ -1291,6 +1399,18 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
                                     f"(target code already matches suggested code): {body[:60]}..."
                                 )
                                 continue
+                # Discard bug-injecting suggestions that strip 'this.' to create self-referential calls (e.g. holder.is(holder))
+                sugg_match = re.search(r"```suggestion\r?\n(.*?)\r?\n```", body, re.DOTALL)
+                if sugg_match:
+                    sugg_code = sugg_match.group(1).strip()
+                    target_line_content = parsed_diff.line_contents.get(path, {}).get(line, "")
+                    self_calls = re.findall(r"\b([A-Za-z0-9_]+)\.[A-Za-z0-9_]+\(\s*\1\s*\)", sugg_code)
+                    if any(f"this.{v}" in target_line_content for v in self_calls):
+                        logger.info(
+                            f"Discarding bug-injecting suggestion comment on '{path}:{line}' "
+                            f"(suggestion creates self-referential call): {body[:60]}..."
+                        )
+                        continue
 
                 if not self._is_suggestion_safe(body, path, line, extracted_target, parsed_diff, was_snapped, is_valid_line):
                     lang = self._get_code_language(path)
