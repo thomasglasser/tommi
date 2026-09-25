@@ -18,3 +18,7 @@ dependencies = [
 
 [project.scripts]
 tommi = "src.cli:main"
+
+[tool.setuptools]
+packages = ["src"]
+
