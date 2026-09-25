@@ -11,3 +11,6 @@ ENV/
 .vscode/
 *.swp
 *.swo
+*.egg-info/
+build/
+dist/
