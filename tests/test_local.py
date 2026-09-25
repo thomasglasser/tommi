@@ -47,6 +47,35 @@ class TestLocalReview(unittest.TestCase):
         self.assertEqual(branch, "feature-test")
 
     @patch("src.local.subprocess.run")
+    def test_get_default_branch_symbolic_ref(self, mock_run):
+        # 1st call: symbolic-ref returns refs/remotes/origin/26.1
+        # 2nd call: rev-parse --verify 26.1 returns 0 (local branch exists)
+        mock_run.side_effect = [
+            MagicMock(stdout="refs/remotes/origin/26.1\n", returncode=0),
+            MagicMock(stdout="abc1234\n", returncode=0),
+        ]
+        base = get_default_branch("/path/to/repo")
+        self.assertEqual(base, "26.1")
+
+    @patch("src.local.subprocess.run")
+    def test_get_default_branch_from_prefix(self, mock_run):
+        # symbolic-ref fails, rev-parse origin/HEAD fails, branch is 26.1-feature, prefix 26.1 succeeds
+        def fake_run(cmd, **kwargs):
+            if "symbolic-ref" in cmd:
+                return MagicMock(returncode=1, stdout="")
+            if "--abbrev-ref" in cmd and "HEAD" in cmd and "origin/HEAD" in cmd:
+                return MagicMock(returncode=1, stdout="")
+            if "--abbrev-ref" in cmd and "HEAD" in cmd:
+                return MagicMock(stdout="26.1-feature\n", returncode=0)
+            if "--verify" in cmd and "26.1" in cmd:
+                return MagicMock(returncode=0, stdout="abc123\n")
+            return MagicMock(returncode=1, stdout="")
+
+        mock_run.side_effect = fake_run
+        base = get_default_branch("/path/to/repo")
+        self.assertEqual(base, "26.1")
+
+    @patch("src.local.subprocess.run")
     def test_extract_git_diff_staged(self, mock_run):
         mock_run.return_value = MagicMock(stdout="diff --git a/Test.java b/Test.java\n", returncode=0)
         diff, desc = extract_git_diff("/path/to/repo", mode="staged")
@@ -65,7 +94,7 @@ class TestLocalReview(unittest.TestCase):
         diff, desc = extract_git_diff("/path/to/repo", mode="branch", base="main")
         self.assertEqual(diff, "diff content\n")
         self.assertIn("main", desc)
-        mock_run.assert_called_once_with(
+        mock_run.assert_called_with(
             ["git", "-C", "/path/to/repo", "diff", "main...HEAD"],
             capture_output=True,
             text=True,

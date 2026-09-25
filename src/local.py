@@ -47,9 +47,87 @@ def get_current_branch(git_root: str) -> str:
         return "HEAD"
 
 
-def get_default_branch(git_root: str) -> str:
-    """Guesses the default base branch (e.g. origin/main, main, origin/master, master)."""
-    candidates = ["origin/main", "main", "origin/master", "master"]
+def get_default_branch(git_root: str) -> Optional[str]:
+    """
+    Detects the default base branch for the repository.
+    Checks:
+    1. Symbolic ref of origin/HEAD (e.g. refs/remotes/origin/26.1 -> 26.1 or origin/26.1)
+    2. Abbreviated ref of origin/HEAD
+    3. Prefix of current branch (e.g. '26.1-smol-update' -> '26.1' or 'origin/26.1')
+    4. Common candidate names ('origin/main', 'main', 'origin/master', 'master', etc.)
+    """
+    # 1. Try querying remote HEAD symbolic ref (e.g. refs/remotes/origin/26.1)
+    try:
+        res = subprocess.run(
+            ["git", "-C", git_root, "symbolic-ref", "refs/remotes/origin/HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            ref = res.stdout.strip()
+            if ref.startswith("refs/remotes/"):
+                candidate = ref[len("refs/remotes/"):]
+                local_candidate = candidate.replace("origin/", "")
+                # Prefer local branch if it exists, otherwise remote ref
+                res_local = subprocess.run(
+                    ["git", "-C", git_root, "rev-parse", "--verify", local_candidate],
+                    capture_output=True,
+                    check=False,
+                )
+                if res_local.returncode == 0:
+                    return local_candidate
+                return candidate
+    except Exception:
+        pass
+
+    # 2. Try git rev-parse --abbrev-ref origin/HEAD
+    try:
+        res = subprocess.run(
+            ["git", "-C", git_root, "rev-parse", "--abbrev-ref", "origin/HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            candidate = res.stdout.strip()
+            if candidate != "origin/HEAD":
+                local_candidate = candidate.replace("origin/", "")
+                res_local = subprocess.run(
+                    ["git", "-C", git_root, "rev-parse", "--verify", local_candidate],
+                    capture_output=True,
+                    check=False,
+                )
+                if res_local.returncode == 0:
+                    return local_candidate
+                return candidate
+    except Exception:
+        pass
+
+    # 3. Try current branch prefix (e.g. '26.1-feature' or '1.21.1/feature' -> '26.1' or '1.21.1')
+    current = get_current_branch(git_root)
+    if current and ("-" in current or "/" in current):
+        prefix = current.split("-")[0].split("/")[0]
+        for c in [prefix, f"origin/{prefix}"]:
+            try:
+                res = subprocess.run(
+                    ["git", "-C", git_root, "rev-parse", "--verify", c],
+                    capture_output=True,
+                    check=False,
+                )
+                if res.returncode == 0:
+                    return c
+            except Exception:
+                pass
+
+    # 4. Standard candidates
+    candidates = [
+        "origin/main", "main",
+        "origin/master", "master",
+        "origin/trunk", "trunk",
+        "origin/develop", "develop",
+        "origin/dev", "dev",
+    ]
     for c in candidates:
         try:
             res = subprocess.run(
@@ -61,7 +139,8 @@ def get_default_branch(git_root: str) -> str:
                 return c
         except Exception:
             pass
-    return "main"
+
+    return None
 
 
 def has_uncommitted_changes(git_root: str) -> bool:
@@ -99,8 +178,12 @@ def extract_git_diff(
     if commit:
         cmd = ["git", "-C", git_root, "show", commit]
         desc = f"Commit: {commit}"
-        res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        return res.stdout, desc
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            return res.stdout, desc
+        except subprocess.CalledProcessError as e:
+            err = (e.stderr or e.stdout or "").strip()
+            raise RuntimeError(f"Git show failed: {err if err else str(e)}") from e
 
     # Base git command
     cmd = ["git", "-C", git_root, "diff"]
@@ -114,6 +197,21 @@ def extract_git_diff(
         desc = "Unstaged working tree changes"
     elif mode == "branch":
         base_ref = base or get_default_branch(git_root)
+        if not base_ref:
+            raise ValueError(
+                "Could not auto-detect a default base branch. "
+                "Please specify the base branch explicitly using --base <ref> (e.g. tommi review --base 26.1)."
+            )
+        verify_res = subprocess.run(
+            ["git", "-C", git_root, "rev-parse", "--verify", base_ref],
+            capture_output=True,
+            check=False,
+        )
+        if verify_res.returncode != 0:
+            raise ValueError(
+                f"Base branch '{base_ref}' does not exist in this repository. "
+                "Please specify a valid base branch with --base <ref>."
+            )
         full_cmd = cmd + [f"{base_ref}...HEAD"] + path_args
         desc = f"Branch changes against '{base_ref}'"
     elif mode == "working":
@@ -129,15 +227,32 @@ def extract_git_diff(
         else:
             current_branch = get_current_branch(git_root)
             default_branch = get_default_branch(git_root)
-            if current_branch not in (default_branch, "main", "master", "HEAD"):
+
+            has_valid_base = False
+            if default_branch and current_branch != "HEAD":
+                if default_branch != current_branch and default_branch.replace("origin/", "") != current_branch:
+                    verify_res = subprocess.run(
+                        ["git", "-C", git_root, "rev-parse", "--verify", default_branch],
+                        capture_output=True,
+                        check=False,
+                    )
+                    if verify_res.returncode == 0:
+                        has_valid_base = True
+
+            if has_valid_base:
                 full_cmd = cmd + [f"{default_branch}...HEAD"]
                 desc = f"Branch '{current_branch}' vs '{default_branch}'"
             else:
                 full_cmd = ["git", "-C", git_root, "diff", "HEAD~1..HEAD"]
                 desc = "Latest commit (HEAD)"
 
-    res = subprocess.run(full_cmd, capture_output=True, text=True, check=True)
-    return res.stdout, desc
+    try:
+        res = subprocess.run(full_cmd, capture_output=True, text=True, check=True)
+        return res.stdout, desc
+    except subprocess.CalledProcessError as e:
+        err = (e.stderr or e.stdout or "").strip()
+        raise RuntimeError(f"Git diff failed: {err if err else str(e)}") from e
+
 
 
 def format_terminal_review(
