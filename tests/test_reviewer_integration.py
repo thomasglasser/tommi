@@ -1408,6 +1408,28 @@ class TestFetchPrDiffFallback(unittest.TestCase):
         validated = reviewer._validate_comments([raw_comment], parsed)
         self.assertEqual(len(validated), 0, "Self-retracted comment concluding with 'No issue' must be discarded")
 
+        # Test [DISMISSED] marker
+        raw_dismissed = {
+            "path": "src/ExtendedHolder.java",
+            "line": 192,
+            "body": "Checked this.holder vs holder param. Intentional shadowing. [DISMISSED]",
+            "severity": "SUGGESTION"
+        }
+        validated_dismissed = reviewer._validate_comments([raw_dismissed], parsed)
+        self.assertEqual(len(validated_dismissed), 0, "Comment ending with [DISMISSED] must be discarded")
+
+        # Test actionable: False
+        raw_not_actionable = {
+            "path": "src/ExtendedHolder.java",
+            "line": 192,
+            "body": "Some observation that turned out not to be an issue",
+            "severity": "SUGGESTION",
+            "actionable": False
+        }
+        validated_not_actionable = reviewer._validate_comments([raw_not_actionable], parsed)
+        self.assertEqual(len(validated_not_actionable), 0, "Comment with actionable: False must be discarded")
+
+
 
 
 

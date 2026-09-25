@@ -23,6 +23,7 @@ class ReviewCommentItem(BaseModel):
     severity: str = Field(default="WARNING", description="Severity of the issue: CRITICAL, WARNING, or SUGGESTION.")
     target_code: Optional[str] = Field(default=None, description="The exact single line of code or distinctive snippet from the diff being targeted.")
     body: str = Field(description="The review comment explaining the issue and how to resolve it.")
+    actionable: bool = Field(default=True, description="Set to false if while reviewing or drafting you realize there is no genuine issue or that the code is intentional/valid.")
 
 
 def extract_retry_delay(error: Exception) -> Optional[float]:
@@ -922,14 +923,19 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
    ```suggestion
    exact replacement code
    ```
-8. **Never Emit Self-Retracted Comments ("No Issue")**: Do NOT leave generic praise, commentary on valid code, or self-retracted comments. If you evaluate a line and realize that the code is intentional, shadows a variable, or that "no issue" exists, DO NOT output a comment for it! Discard it completely. If all candidate issues turn out to be non-issues, return an empty array `[]`.
+8. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
+   If while drafting a comment you realize there is actually no genuine issue (e.g. you notice parameter shadowing, intentional fallback, or that a rule does not apply):
+   - Conclude the comment body with `[DISMISSED]` (e.g., `...So this is mandatory! [DISMISSED]`), or set `"actionable": false`.
+   - The review engine will automatically recognize that you changed your mind and will discard the comment so it does not pollute the review!
+   - If all candidate issues turn out to be non-issues, return an empty array `[]`.
 9. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
 10. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. **CRITICAL**: Read the line number directly from the line prefix in the annotated diff (e.g. `  189: + ...` or `  190:   ...`). Do NOT count or estimate line numbers.
    - `target_code`: The exact line or distinctive snippet of code from the diff that this comment targets.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
-   - `body`: Your review comment.
+   - `body`: Your review comment (or conclude with `[DISMISSED]` if you changed your mind).
+   - `actionable`: Boolean (`true` by default, or `false` if dismissed as a non-issue).
 11. If there are no issues found, return an empty array `[]`.
 12. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
 """
@@ -1062,13 +1068,22 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 
         return True
 
-    def _is_actionable_comment(self, body: str) -> bool:
+    def _is_actionable_comment(self, body: str, item: Optional[Dict[str, Any]] = None) -> bool:
         """
         Validates that a comment actually proposes an actionable change and does not
-        retract itself (e.g. concluding 'No issue', 'no action needed', 'actually fine').
+        retract itself (e.g. concluding '[DISMISSED]', '[NO_ISSUE]', 'No issue', or actionable=false).
         """
+        if item is not None and not item.get("actionable", True):
+            return False
+
         clean = body.strip().rstrip(".! \t\r\n").lower()
         if not clean:
+            return False
+
+        # Explicit dismissal markers anywhere or at end
+        if clean.endswith("[dismissed]") or clean.endswith("[no_issue]") or clean.endswith("[discard]"):
+            return False
+        if "[dismissed]" in clean or "[no_issue]" in clean or "[discard]" in clean:
             return False
 
         # Check ending of comment (where retractions typically appear)
@@ -1136,7 +1151,7 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
                 continue
 
             # Discard self-retracted comments where the AI thought out loud and concluded no issue / no action needed
-            if not self._is_actionable_comment(body):
+            if not self._is_actionable_comment(body, item):
                 logger.info(f"Discarding non-actionable / self-retracted comment on '{path}:{line}': {body[:60]}...")
                 continue
 
