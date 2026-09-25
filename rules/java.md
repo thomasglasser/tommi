@@ -2,7 +2,7 @@
 
 ## 1. Collections & FastUtil
 * **Avoid Default Collections**: Avoid standard `ArrayList` and `HashMap` in favor of FastUtil or Guava equivalents (e.g., `ObjectArrayList`, `ReferenceOpenHashSet`, `Object2ObjectOpenHashMap`) to minimize boxing and memory overhead.
-* **Immutability for Public APIs**: ALWAYS use Guava immutable collection types (`ImmutableList`, `ImmutableSet`, `ImmutableMap`) in return types and implementations for public APIs. NEVER use or suggest `Collections.unmodifiable*` wrappers as they obscure immutability in the API signature.
+* **Immutability for Public APIs**: ALWAYS prefer Guava immutable collection types (`ImmutableList`, `ImmutableSet`, `ImmutableMap`) or custom unmodifiable wrapper classes that clearly communicate immutability in their class name/API (e.g., `ImmutableCollectionView`) for public APIs. Custom immutable collection views are completely acceptable as long as their immutability is clear. NEVER use or suggest raw `Collections.unmodifiable*` wrappers that return generic mutable `Collection<E>` / `List<E>` types as API signatures.
 * **LinkedHashSet & Sequenced Collections**: Do NOT flag standard `LinkedHashSet` as a violation of FastUtil collection rules when sequenced operations (such as `reversed()`) or `SequencedSet` compatibility are required; FastUtil's `ObjectLinkedOpenHashSet` does not support these methods.
 
 ## 2. Language Features & APIs

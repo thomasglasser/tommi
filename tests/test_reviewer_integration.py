@@ -1351,4 +1351,33 @@ class TestFetchPrDiffFallback(unittest.TestCase):
         self.assertIn("--- a/src/OldName.java", diff)
         self.assertIn("+++ b/src/NewName.java", diff)
 
+    def test_suggestion_safety_rejects_this_stripping_self_referential_call(self):
+        from src.diff_parser import parse_unified_diff
+        config = TommiConfig(github_token="fake", gemini_api_key="fake", github_repository="owner/repo", pr_number=1)
+        reviewer = TommiReviewer(config)
+
+        diff_text = """diff --git a/src/ExtendedHolder.java b/src/ExtendedHolder.java
+--- a/src/ExtendedHolder.java
++++ b/src/ExtendedHolder.java
+@@ -190,3 +190,3 @@ public class ExtendedHolder {
+     public boolean is(Holder<R> holder) {
+-        return false;
++        return this.holder != null && this.holder.is(holder);
+     }
+"""
+        parsed = parse_unified_diff(diff_text)
+        raw_comment = {
+            "path": "src/ExtendedHolder.java",
+            "line": 192,
+            "target_code": "return this.holder != null && this.holder.is(holder);",
+            "body": "Avoid redundant `this.` qualifiers.\n\n```suggestion\n        return holder != null && holder.is(holder);\n```",
+            "severity": "SUGGESTION"
+        }
+        validated = reviewer._validate_comments([raw_comment], parsed)
+        self.assertEqual(len(validated), 1)
+        # Should convert ```suggestion into ```java because holder.is(holder) is an unsafe self-referential call
+        self.assertNotIn("```suggestion", validated[0]["body"])
+        self.assertIn("```java", validated[0]["body"])
+
+
 

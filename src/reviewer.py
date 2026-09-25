@@ -922,6 +922,8 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
    - Do NOT flag referencing inner classes or enums via an imported outer class (e.g. `Outer.Inner`).
    - Do NOT flag fully qualified class names inside Javadoc tags (e.g. `{{@link ...}}`).
    - Do NOT flag single-statement `.forEach(...)` on collections outside hot paths.
+   - Do NOT flag custom immutable collection view classes (e.g. `ImmutableCollectionView`) that clearly communicate their unmodifiable nature in their name or API contract.
+   - Do NOT suggest removing `this.` qualifiers when a method parameter or local variable shadows the field (e.g. `boolean is(Holder<R> holder)` accessing `this.holder`). NEVER propose suggestions that compare a parameter to itself (e.g. `holder.is(holder)`).
 7. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
 8. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
    ```suggestion
@@ -1041,10 +1043,17 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
             return False
 
         # Structural brackets / empty lines should not be overwritten by multi-line code suggestions
-        if target_line_content in ("}", "{", ");", "};"):
-            sugg_match = re.search(r"```suggestion\r?\n(.*?)\r?\n```", body, re.DOTALL)
-            if sugg_match and sugg_match.group(1).strip() not in ("}", "{", ");", "};"):
+        sugg_match = re.search(r"```suggestion\r?\n(.*?)\r?\n```", body, re.DOTALL)
+        if sugg_match:
+            sugg_code = sugg_match.group(1).strip()
+            if target_line_content in ("}", "{", ");", "};") and sugg_code not in ("}", "{", ");", "};"):
                 return False
+
+            # Reject suggestions that strip 'this.' and produce self-referential calls (e.g. holder.is(holder) when target was this.holder.is(holder))
+            self_calls = re.findall(r"\b([A-Za-z0-9_]+)\.[A-Za-z0-9_]+\(\s*\1\s*\)", sugg_code)
+            for var_name in self_calls:
+                if f"this.{var_name}" in target_line_content:
+                    return False
 
         # If the AI specified target_code, verify that the line at `line` actually resembles it
         if target_code:
