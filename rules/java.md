@@ -35,4 +35,8 @@
 * **Generics**:
   * Avoid raw types. Use `<?>` or properly bounded wildcards when the exact type parameter is not constrained.
   * **Generic Shadowing & Type Checks**: Do NOT flag `instanceof` checks or type casts on generic type parameters inside static methods as redundant when the static method declares its own generic type parameter that shadows or differs from class-level generics.
+* **Unnamed Variables & Lambda Parameters (`_`)**:
+  * **Java 21 Incompatibility (e.g. Minecraft 1.21.x)**: Unnamed variables and patterns (`_`) are a preview feature in Java 21 (JEP 443) and are NOT enabled in standard Java 21 builds. Using `_` as a variable or lambda parameter causes compilation errors (`as of release 9, '_' is a keyword`).
+  * **NEVER Suggest `_` in Java 21**: NEVER instruct authors to replace unused lambda parameters, exception variables, or method parameters with `_` in Java 21 / 1.21.x codebases.
+  * **Functional Interface Conformance**: When a lambda implements a functional interface taking parameters that the lambda body does not consume (e.g. `key -> sup.get()` for `Function<ResourceKey<T>, T>`), keeping the named parameter (such as `key` or `ignored`) is standard, correct, and MUST NOT be flagged as an unused variable.
 

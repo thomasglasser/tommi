@@ -1539,6 +1539,13 @@ class TestFetchPrDiffFallback(unittest.TestCase):
                 "is_valid_line": True,
             },
             {
+                "path": "Registrar.java",
+                "line": 158,
+                "severity": "SUGGESTION",
+                "body": "Unused lambda parameter `key`. In Java, when a lambda parameter is intentionally discarded or unused, name it `_` (unnamed variable in Java 21+).",
+                "is_valid_line": True,
+            },
+            {
                 "path": "RealBug.java",
                 "line": 10,
                 "severity": "CRITICAL",
@@ -1554,7 +1561,8 @@ class TestFetchPrDiffFallback(unittest.TestCase):
             {"index": 3, "keep": False, "reason": "SPI interface must retain ResourceKey parameter"},
             {"index": 4, "keep": False, "reason": "Delegation would break covariant return types"},
             {"index": 5, "keep": False, "reason": "Utility/constants classes have all-static members and do not need private constructors"},
-            {"index": 6, "keep": True, "reason": "Genuine null safety bug"},
+            {"index": 6, "keep": False, "reason": "Java 21 does not support unnamed variables (_)"},
+            {"index": 7, "keep": True, "reason": "Genuine null safety bug"},
         ]
 
         with patch.object(reviewer, "_execute_review_generation", return_value=json.dumps(mock_verdicts)):
