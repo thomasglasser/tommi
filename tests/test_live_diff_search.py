@@ -371,6 +371,8 @@ class TestLiveDiffSearch(unittest.TestCase):
             preferred_model=None,
             enable_tools=False,
         )
+        if comments is None and (is_429 or is_503):
+            self.skipTest(f"Gemini API transiently unavailable ({err}); skipping live inference test.")
         self.assertIsNotNone(comments)
         self.assertIsInstance(comments, list)
         self.assertTrue(len(comments) > 0)

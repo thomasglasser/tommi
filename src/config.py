@@ -94,3 +94,53 @@ class TommiConfig:
             thinking_budget=thinking_budget,
             max_inline_comments=max_inline_comments,
         )
+
+    @classmethod
+    def for_local(
+        cls,
+        gemini_api_key: Optional[str] = None,
+        model_name: str = "auto",
+        thinking_budget: int = 2048,
+        workspace_dir: Optional[str] = None,
+        tommi_repo: str = "thomasglasser/tommi",
+    ) -> "TommiConfig":
+        """
+        Creates a TommiConfig tailored for local offline diff reviews without requiring GitHub tokens or PR IDs.
+        """
+        key = (gemini_api_key or os.environ.get("GEMINI_API_KEY", "")).strip()
+
+        # If not in env, search .env files
+        if not key:
+            candidates = [
+                os.path.join(workspace_dir or os.getcwd(), ".env"),
+                os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env"),
+            ]
+            for env_path in candidates:
+                if os.path.isfile(env_path):
+                    try:
+                        with open(env_path, "r", encoding="utf-8") as f:
+                            for line in f:
+                                line = line.strip()
+                                if line.startswith("GEMINI_API_KEY="):
+                                    key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                                    break
+                    except Exception:
+                        pass
+                if key:
+                    break
+
+        if not key:
+            raise ValueError(
+                "Missing GEMINI_API_KEY. Please set the GEMINI_API_KEY environment variable "
+                "or define it in a .env file."
+            )
+
+        return cls(
+            gemini_api_key=key,
+            github_repository="local/workspace",
+            pr_number=0,
+            model_name=model_name,
+            tommi_repo=tommi_repo,
+            thinking_budget=thinking_budget,
+            event_name="local_review",
+        )

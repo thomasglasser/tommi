@@ -645,21 +645,40 @@ class TommiReviewer:
         """
         logger.info(f"Fetching PR #{self.config.pr_number} diff...")
         diff_text = self.fetch_pr_diff(pr_url)
+        return self.review_diff(
+            diff_text=diff_text,
+            title=pr_title,
+            description=pr_body,
+            enable_tools=enable_tools,
+        )
 
+    def review_diff(
+        self,
+        diff_text: str,
+        title: str = "Code Review",
+        description: str = "",
+        enable_tools: bool = False,
+        repo_workspace_dir: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        Executes code review analysis on unified diff text with transient error retry,
+        automatic diff batching for large diffs, model candidate failover, and a second retry pass.
+        """
         filtered_diff = filter_diff_for_review(diff_text)
         if not filtered_diff.strip():
-            logger.info("PR diff contains no reviewable code files. Nothing to review.")
+            logger.info("Diff contains no reviewable code files. Nothing to review.")
             self.unreviewed_files = []
             return []
 
         parsed_diff = parse_unified_diff(filtered_diff)
-        rules = load_all_rules()
+        target_ws = repo_workspace_dir or getattr(self.inspector, "workspace_dir", None)
+        rules = load_all_rules(repo_workspace_dir=target_ws)
         candidate_models = resolve_candidate_models(self.client, self.config.model_name)
 
         diff_batches = split_diff_into_batches(filtered_diff, max_files_per_batch=15, max_chars_per_batch=100_000)
         logger.info(f"Loaded rules ({len(rules.base_rules)} base modules, {len(rules.local_rules)} local files).")
         if len(diff_batches) > 1:
-            logger.info(f"PR #{self.config.pr_number} is large ({len(parsed_diff.files)} files, {len(filtered_diff)} chars). Split into {len(diff_batches)} review batches to maintain high attention and prevent quota exhaustion.")
+            logger.info(f"Diff is large ({len(parsed_diff.files)} files, {len(filtered_diff)} chars). Split into {len(diff_batches)} review batches to maintain high attention and prevent quota exhaustion.")
 
         all_comments_data = []
         preferred_model = None
@@ -684,8 +703,8 @@ class TommiReviewer:
                 batch_parsed_diff=batch_parsed_diff,
                 b_idx=b_idx,
                 total_batches=len(diff_batches),
-                pr_title=pr_title,
-                pr_body=pr_body,
+                pr_title=title,
+                pr_body=description,
                 rules=rules,
                 candidate_models=candidate_models,
                 model_cooldowns=model_cooldowns,
@@ -770,8 +789,8 @@ class TommiReviewer:
                     batch_parsed_diff=batch_parsed_diff,
                     b_idx=b_idx,
                     total_batches=len(diff_batches),
-                    pr_title=pr_title,
-                    pr_body=pr_body,
+                    pr_title=title,
+                    pr_body=description,
                     rules=rules,
                     candidate_models=candidate_models,
                     model_cooldowns=model_cooldowns,

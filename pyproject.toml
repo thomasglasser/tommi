@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tommi"
+version = "1.0.0"
+description = "T.O.M.M.I. - AI-Powered Automated Code Reviewer"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "PyGithub>=2.1.1",
+    "google-genai>=1.0.0",
+    "requests>=2.31.0",
+    "pydantic>=2.0.0",
+    "tenacity>=8.2.3",
+]
+
+[project.scripts]
+tommi = "src.cli:main"
