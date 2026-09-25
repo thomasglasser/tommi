@@ -20,6 +20,10 @@
 * **Local Classes in Methods**: Do NOT flag local classes declared inside methods when used for lambda workarounds or local context as misplaced inner classes.
 * **Variable Placement**: Declare variables right above where they are used, rather than at the top of a method.
 * **Single-Statement Braces**: Omit curly braces (`{}`) for single-statement blocks (e.g., single-line `if`, `for`, `while`, or early `return`). The body statement MUST NOT be placed on the same line as the control statement; ALWAYS place it indented on a separate line. When wrapping multi-line nested `if/else` control flow, retain outer braces to eliminate dangling-else ambiguity.
+* **Empty Method & Block Bodies (`{}`)**:
+  * Empty method bodies (e.g., `public static void init() {}`, no-op event handlers, lifecycle callbacks, or empty constructors) are standard, clean, and expected to be written as `{}` on a single line.
+  * NEVER suggest expanding empty method bodies (`{}`) across multiple lines; automated formatters (Spotless / Immaculate) automatically collapse empty blocks to `{}` on a single line.
+  * NEVER flag empty `init()` or lifecycle methods as dead code; they are active initialization hooks called by platform loaders (Fabric / NeoForge) to force classloading and run static initializers.
 * **Control Flow & Branching**:
   * Combine boolean conditions with `&&` and `||` wherever possible to avoid unnecessary nested `if` statements.
   * Use `else if` chains rather than isolated `if` statements when branching on the same condition.
@@ -42,6 +46,7 @@
   * **Java Single Inheritance Constraints**: NEVER suggest extracting a shared base class across classes that already extend distinct parent classes (e.g. `FabricItemsRegistrar extends Registrar.Items` and `FabricBlocksRegistrar extends Registrar.Blocks`). Java enforces single class inheritance; subclasses of different abstract classes cannot inherit from a common base class. If deduplication is needed, suggest composition or interface default methods, NEVER an impossible base class inheritance hierarchy.
 * **No Redundant Overrides**: If an overridden method only calls `super.method()`, remove the override entirely.
 * **Remove Dead Code**: NEVER commit commented-out code, unused variables, or unused generic parameters.
+  * **Static Initialization & Lifecycle Hooks**: Do NOT flag empty `init()`, bootstrap, or lifecycle methods as dead code; they are required entrypoints called by platform loaders (Fabric / NeoForge) to force classloading and guarantee static initialization.
 * **No `var`**: Do NOT use the `var` keyword in Java. Explicitly define variable types.
 * **Static Imports**: Do NOT use static imports.
 * **Return Types**: Design methods to return informative types or booleans (e.g., success/failure or cancellation) rather than relying on side effects.

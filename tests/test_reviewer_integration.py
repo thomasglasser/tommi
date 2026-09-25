@@ -1695,6 +1695,92 @@ class TestFetchPrDiffFallback(unittest.TestCase):
                 "Genuine unnecessary this. comment without shadowing must NOT be discarded"
             )
 
+    def test_validate_comments_discards_formatter_conflict_on_empty_method(self):
+        from src.diff_parser import parse_unified_diff
+
+        config = TommiConfig(
+            github_token="fake",
+            gemini_api_key="fake",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto",
+        )
+        reviewer = TommiReviewer(config)
+
+        diff_text = (
+            "diff --git a/TommyLib.java b/TommyLib.java\n"
+            "--- a/TommyLib.java\n"
+            "+++ b/TommyLib.java\n"
+            "@@ -1,5 +1,5 @@\n"
+            " package dev.thomasglasser.tommylib;\n"
+            " public class TommyLib {\n"
+            "+    public static void init() {}\n"
+            " }\n"
+        )
+        parsed = parse_unified_diff(diff_text)
+
+        # 1. Hallucinated comment complaining about collapsing empty method into single line
+        formatter_comment = {
+            "path": "TommyLib.java",
+            "line": 3,
+            "body": (
+                "Method bodies, even when empty, should not be collapsed into a single line. "
+                "Expand the curly braces onto separate lines or remove the method if it's truly dead code."
+            ),
+            "severity": "WARNING",
+        }
+
+        validated = reviewer._validate_comments([formatter_comment], parsed)
+        self.assertEqual(
+            len(validated), 0,
+            "Comment demanding multi-line expansion of empty method bodies must be discarded as a formatter conflict"
+        )
+
+        # 2. Suggestion expanding empty braces {} across multiple lines
+        expanding_sugg_comment = {
+            "path": "TommyLib.java",
+            "line": 3,
+            "body": (
+                "Format method body across multiple lines.\n\n"
+                "```suggestion\n"
+                "    public static void init() {\n"
+                "    }\n"
+                "```"
+            ),
+            "severity": "SUGGESTION",
+        }
+
+        validated_sugg = reviewer._validate_comments([expanding_sugg_comment], parsed)
+        self.assertEqual(
+            len(validated_sugg), 0,
+            "Suggestion expanding single-line {} into multi-line empty block must be discarded"
+        )
+
+        # 3. Genuine comment with non-empty method body should not be discarded
+        non_empty_diff = (
+            "diff --git a/TommyLib.java b/TommyLib.java\n"
+            "--- a/TommyLib.java\n"
+            "+++ b/TommyLib.java\n"
+            "@@ -1,5 +1,5 @@\n"
+            " package dev.thomasglasser.tommylib;\n"
+            " public class TommyLib {\n"
+            "+    public static void init() { doSomething(); }\n"
+            " }\n"
+        )
+        non_empty_parsed = parse_unified_diff(non_empty_diff)
+        genuine_comment = {
+            "path": "TommyLib.java",
+            "line": 3,
+            "body": "Method body with statements should be formatted on separate lines.",
+            "severity": "WARNING",
+        }
+        validated_genuine = reviewer._validate_comments([genuine_comment], non_empty_parsed)
+        self.assertEqual(
+            len(validated_genuine), 1,
+            "Genuine formatting comment on non-empty method should not be discarded"
+        )
+
+
 
 
 

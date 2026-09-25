@@ -923,26 +923,28 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
    When code is moved or refactored in a diff (deleted from one location and added in another), evaluate the code strictly in its NEW, final position (`+` lines) and check the 'MODIFIED FILES SURROUNDING SOURCE CODE'. NEVER instruct the author to perform a relocation or refactoring that the commit/PR has just performed (e.g. telling the author to move a constructor above static factories or move an instance method below static factories when the commit just moved them there). Check the actual line numbers in the surrounding code: if the constructor line number is lower than the static factory line number, the order is strictly correct. Do NOT report it!
 7. **Parameter Shadowing & 'this.' Disambiguation**:
    In Java, ANY method parameter or local variable sharing a field's name strictly shadows that field, regardless of type. If a method parameter is named `holder`, accessing `this.holder` is MANDATORY to access the class field. NEVER claim `this.` is unnecessary or suggest removing it when a parameter or local variable has the same name, and NEVER suggest changes that produce self-referential calls (e.g. `holder.is(holder)` or `x.equals(x)`).
-8. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-9. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
+8. **Formatter Precedence & Empty Method Bodies**:
+   Single-line empty method bodies (`{{}}`) such as `public static void init() {{}}`, no-op callbacks, or empty constructors are standard, clean, and enforced by automated repository formatters (Spotless / Immaculate). NEVER instruct authors to expand empty `{{}}` blocks across multiple lines, and NEVER flag empty initialization methods (`init()`, lifecycle hooks) as dead code.
+9. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
+10. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
    ```suggestion
    exact replacement code
    ```
-10. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
+11. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
    If while drafting a comment you realize there is actually no genuine issue (e.g. you notice parameter shadowing, intentional fallback, or that a rule does not apply):
    - Conclude the comment body with `[DISMISSED]` (e.g., `...So this is mandatory! [DISMISSED]`), or set `"actionable": false`.
    - The review engine will automatically recognize that you changed your mind and will discard the comment so it does not pollute the review!
    - If all candidate issues turn out to be non-issues, return an empty array `[]`.
-11. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
-12. Each object must have:
+12. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+13. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. **CRITICAL**: Read the line number directly from the line prefix in the annotated diff (e.g. `  189: + ...` or `  190:   ...`). Do NOT count or estimate line numbers.
    - `target_code`: The exact line or distinctive snippet of code from the diff that this comment targets.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment (or conclude with `[DISMISSED]` if you changed your mind).
    - `actionable`: Boolean (`true` by default, or `false` if dismissed as a non-issue).
-13. If there are no issues found, return an empty array `[]`.
-14. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
+14. If there are no issues found, return an empty array `[]`.
+15. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
 """
 
     def _align_suggestion_indentation(self, body: str, path: str, line: int, parsed_diff: ParsedDiff) -> str:
@@ -1314,6 +1316,102 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 
         return False
 
+    def _is_formatter_conflict_hallucination(
+        self,
+        path: str,
+        body: str,
+        line: Optional[int],
+        parsed_diff: Optional[ParsedDiff] = None,
+        target_code: Optional[str] = None,
+    ) -> bool:
+        """
+        Detects formatter conflict hallucinations where the AI claims that empty method bodies
+        or blocks should not be collapsed into a single line (demanding expansion across multiple lines),
+        or flags empty static initialization hooks (like `public static void init() {}`) as dead code.
+        Automated formatters (Spotless/Immaculate) enforce `{}` on a single line, and multi-loader mods
+        use empty static `init()` hooks to force classloading and static initialization.
+        """
+        body_lower = body.lower()
+
+        # Phrases indicating the AI is demanding multi-line expansion of empty blocks / {}
+        expand_braces_triggers = [
+            "collapsed into a single line",
+            "collapsed onto a single line",
+            "expand the curly braces",
+            "expand the braces",
+            "curly braces onto separate lines",
+            "braces onto separate lines",
+            "braces should be on separate lines",
+            "expand the method body",
+            "separate lines or remove the method",
+            "method bodies, even when empty",
+            "even when empty, should not be collapsed",
+            "bodies, even when empty, should not be collapsed",
+            "collapsed into {}",
+            "collapsed to {}",
+        ]
+        has_expand_trigger = any(t in body_lower for t in expand_braces_triggers) or (
+            ("expand" in body_lower or "separate line" in body_lower)
+            and ("brace" in body_lower or "empty method" in body_lower or "{}" in body)
+        )
+
+        # Flagging init() or lifecycle hooks as dead code
+        dead_code_init_trigger = (
+            ("dead code" in body_lower or "unused method" in body_lower or "remove the method" in body_lower)
+            and ("init()" in body_lower or "init (" in body_lower or "lifecycle" in body_lower)
+        )
+
+        # Check if suggestion in body expands single-line {} onto multiple lines
+        sugg_match = re.search(r"```suggestion\r?\n(.*?)\r?\n```", body, re.DOTALL)
+        has_sugg_expansion = False
+        sugg_code = ""
+        if sugg_match:
+            sugg_code = sugg_match.group(1)
+            if len(sugg_code.splitlines()) > 1:
+                has_sugg_expansion = True
+
+        if not (has_expand_trigger or dead_code_init_trigger or has_sugg_expansion):
+            return False
+
+        # Retrieve target line content if available
+        target_text = target_code or ""
+        if not target_text and parsed_diff and path in parsed_diff.line_contents and line is not None and line in parsed_diff.line_contents[path]:
+            target_text = parsed_diff.line_contents[path][line]
+
+        if not target_text and getattr(self, "inspector", None) and line is not None:
+            resolved_path = self.inspector._resolve_safe_path(path)
+            if resolved_path and os.path.isfile(resolved_path):
+                try:
+                    with open(resolved_path, "r", encoding="utf-8", errors="replace") as f:
+                        lines = f.readlines()
+                        if 1 <= line <= len(lines):
+                            target_text = lines[line - 1]
+                except Exception:
+                    pass
+
+        if has_sugg_expansion and target_text:
+            if "{}" in target_text or re.search(r"\{\s*\}", target_text):
+                clean_sugg = [re.sub(r"[\s\{\}]+$", "", l.strip()) for l in sugg_code.splitlines() if re.sub(r"[\s\{\}]+$", "", l.strip())]
+                clean_target = [re.sub(r"[\s\{\}]+$", "", l.strip()) for l in target_text.splitlines() if re.sub(r"[\s\{\}]+$", "", l.strip())]
+                if clean_sugg == clean_target:
+                    return True
+
+        if has_expand_trigger:
+            if not target_text:
+                return True
+            if "{}" in target_text or re.search(r"\{\s*\}", target_text) or "init()" in target_text or "init" in target_text:
+                return True
+            if sugg_match:
+                sc = sugg_code.strip()
+                if re.fullmatch(r"\{[\s\r\n]*\}", sc) or ("{" in sc and "}" in sc and not any(c.isalnum() for c in sc.replace("public", "").replace("static", "").replace("void", ""))):
+                    return True
+
+        if dead_code_init_trigger:
+            if not target_text or "init" in target_text.lower() or "{}" in target_text:
+                return True
+
+        return False
+
     def _validate_comments(self, raw_comments: List[Dict[str, Any]], parsed_diff: ParsedDiff) -> List[Dict[str, Any]]:
         severity_rank = {
             "CRITICAL": 1,
@@ -1346,6 +1444,11 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
             # Discard false positive comments attacking 'this.' when 'this.' resolves parameter shadowing
             if self._is_this_shadowing_hallucination(path, body, line):
                 logger.info(f"Discarding false positive on '{path}:{line}': 'this.' is mandatory due to parameter shadowing: {body[:60]}...")
+                continue
+
+            # Discard formatter conflict hallucinations demanding expansion of single-line {} or flagging init() {} as dead code
+            if self._is_formatter_conflict_hallucination(path, body, line, parsed_diff, target_code=target_code):
+                logger.info(f"Discarding formatter conflict hallucination on '{path}:{line}': {body[:60]}...")
                 continue
 
             # Ensure line number is a positive int
@@ -1411,6 +1514,29 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
                             f"(suggestion creates self-referential call): {body[:60]}..."
                         )
                         continue
+
+                # Discard suggestions that expand single-line empty braces {} across multiple lines
+                sugg_match = re.search(r"```suggestion\r?\n(.*?)\r?\n```", body, re.DOTALL)
+                if sugg_match:
+                    sugg_code = sugg_match.group(1)
+                    target_line_content = parsed_diff.line_contents.get(path, {}).get(line, "")
+                    if "{}" in target_line_content or re.search(r"\{\s*\}", target_line_content):
+                        sugg_stripped_statements = [
+                            re.sub(r"[\s\{\}]+$", "", l.strip())
+                            for l in sugg_code.splitlines()
+                            if re.sub(r"[\s\{\}]+$", "", l.strip())
+                        ]
+                        target_stripped_statements = [
+                            re.sub(r"[\s\{\}]+$", "", l.strip())
+                            for l in target_line_content.splitlines()
+                            if re.sub(r"[\s\{\}]+$", "", l.strip())
+                        ]
+                        if sugg_stripped_statements == target_stripped_statements and len(sugg_code.splitlines()) > 1:
+                            logger.info(
+                                f"Discarding formatter conflict suggestion on '{path}:{line}' "
+                                f"(expands empty braces onto multiple lines): {body[:60]}..."
+                            )
+                            continue
 
                 if not self._is_suggestion_safe(body, path, line, extracted_target, parsed_diff, was_snapped, is_valid_line):
                     lang = self._get_code_language(path)
