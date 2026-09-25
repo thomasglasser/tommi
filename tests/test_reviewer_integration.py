@@ -1429,6 +1429,114 @@ class TestFetchPrDiffFallback(unittest.TestCase):
         validated_not_actionable = reviewer._validate_comments([raw_not_actionable], parsed)
         self.assertEqual(len(validated_not_actionable), 0, "Comment with actionable: False must be discarded")
 
+    def test_validate_comments_discards_layout_inversion_hallucinations(self):
+        import os
+        import tempfile
+        from unittest.mock import MagicMock
+        from src.diff_parser import parse_unified_diff
+        from src.repo_tools import WorkspaceInspector
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            # 1. Create a Java file where constructor IS ALREADY above static factories
+            java_path = os.path.join(tmpdir, "ItemHolder.java")
+            with open(java_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "package com.example;\n"
+                    "public class ItemHolder {\n"
+                    "    protected ItemHolder(String key) {\n"
+                    "    }\n"
+                    "    public static ItemHolder createItem(String key) {\n"
+                    "        return new ItemHolder(key);\n"
+                    "    }\n"
+                    "    public void toStack() {\n"
+                    "    }\n"
+                    "}\n"
+                )
+
+            reviewer = TommiReviewer.__new__(TommiReviewer)
+            reviewer.inspector = WorkspaceInspector(tmpdir)
+
+            diff_text = (
+                "diff --git a/ItemHolder.java b/ItemHolder.java\n"
+                "--- a/ItemHolder.java\n"
+                "+++ b/ItemHolder.java\n"
+                "@@ -1,7 +1,9 @@\n"
+                "+package com.example;\n"
+                "+public class ItemHolder {\n"
+                "+    protected ItemHolder(String key) {\n"
+                "+    }\n"
+                "+    public static ItemHolder createItem(String key) {\n"
+                "+        return new ItemHolder(key);\n"
+                "+    }\n"
+                "+    public void toStack() {\n"
+                "+    }\n"
+                "+}\n"
+            )
+            parsed = parse_unified_diff(diff_text)
+
+            # Hallucinated comment claiming constructor should be above static factory
+            inversion_comment = {
+                "path": "ItemHolder.java",
+                "line": 8,
+                "body": (
+                    "According to our class layout rules, static factory methods (such as `createItem(...)`) "
+                    "must be placed directly below constructors and before instance methods. `toStack(...)` is an "
+                    "instance method and should remain below the static factories, but the constructor "
+                    "(`ItemHolder(...)`) should be placed directly above the static factory methods (`createItem(...)`)."
+                ),
+                "severity": "SUGGESTION"
+            }
+
+            validated = reviewer._validate_comments([inversion_comment], parsed)
+            self.assertEqual(
+                len(validated), 0,
+                "Layout inversion hallucination must be discarded when constructor is already above static factories"
+            )
+
+            # 2. Genuine layout violation (constructor actually below static factory)
+            broken_java_path = os.path.join(tmpdir, "BrokenHolder.java")
+            with open(broken_java_path, "w", encoding="utf-8") as f:
+                f.write(
+                    "package com.example;\n"
+                    "public class BrokenHolder {\n"
+                    "    public static BrokenHolder create(String key) {\n"
+                    "        return new BrokenHolder(key);\n"
+                    "    }\n"
+                    "    public BrokenHolder(String key) {\n"
+                    "    }\n"
+                    "}\n"
+                )
+
+            broken_diff_text = (
+                "diff --git a/BrokenHolder.java b/BrokenHolder.java\n"
+                "--- a/BrokenHolder.java\n"
+                "+++ b/BrokenHolder.java\n"
+                "@@ -1,7 +1,7 @@\n"
+                "+package com.example;\n"
+                "+public class BrokenHolder {\n"
+                "+    public static BrokenHolder create(String key) {\n"
+                "+        return new BrokenHolder(key);\n"
+                "+    }\n"
+                "+    public BrokenHolder(String key) {\n"
+                "+    }\n"
+                "+}\n"
+            )
+            broken_parsed = parse_unified_diff(broken_diff_text)
+
+            genuine_comment = {
+                "path": "BrokenHolder.java",
+                "line": 6,
+                "body": "According to our class layout rules, static factory methods must be placed directly below constructors.",
+                "severity": "SUGGESTION"
+            }
+
+            validated_genuine = reviewer._validate_comments([genuine_comment], broken_parsed)
+            self.assertEqual(
+                len(validated_genuine), 1,
+                "Genuine class layout violation must NOT be discarded"
+            )
+
+
 
 
 

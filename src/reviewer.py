@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import re
 import time
 from typing import List, Dict, Any, Optional, Tuple
@@ -918,26 +919,28 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 3. **Trust Compiler & Build Verification**: All PRs are verified to compile and build cleanly via Gradle prior to review. NEVER claim there are compilation errors, syntax errors, duplicate method/field definitions, or missing types that the Java compiler would reject. If you think a method is defined twice, you are misreading a method invocation (e.g. inside an `if` condition) or an overload. Do NOT flag compiler errors.
 4. **Verify Full Method Scope for Variables**: NEVER report a parameter or variable as unused unless you have traced the entire method body and confirmed it is completely unreferenced. Check event postings (`NeoForge.EVENT_BUS.post(...)`), constructor arguments, method calls, lambda closures, and return values before alleging an unused parameter.
 5. **Verify Full Class Scope for Methods & Fields**: Surrounding source code for all modified files is provided above in the 'MODIFIED FILES SURROUNDING SOURCE CODE' section. NEVER claim a method, field, helper, or override is unused, never called, or missing without checking the entire class. If a method is called by another method in the class, overrides an interface/parent method, acts as a factory, or listens to events (e.g. `@SubscribeEvent`), it is actively used.
-6. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-7. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
+6. **Avoid Before/After Inversion & Verify Member Order by Line Numbers**:
+   When code is moved or refactored in a diff (deleted from one location and added in another), evaluate the code strictly in its NEW, final position (`+` lines) and check the 'MODIFIED FILES SURROUNDING SOURCE CODE'. NEVER instruct the author to perform a relocation or refactoring that the commit/PR has just performed (e.g. telling the author to move a constructor above static factories or move an instance method below static factories when the commit just moved them there). Check the actual line numbers in the surrounding code: if the constructor line number is lower than the static factory line number, the order is strictly correct. Do NOT report it!
+7. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
+8. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
    ```suggestion
    exact replacement code
    ```
-8. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
+9. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
    If while drafting a comment you realize there is actually no genuine issue (e.g. you notice parameter shadowing, intentional fallback, or that a rule does not apply):
    - Conclude the comment body with `[DISMISSED]` (e.g., `...So this is mandatory! [DISMISSED]`), or set `"actionable": false`.
    - The review engine will automatically recognize that you changed your mind and will discard the comment so it does not pollute the review!
    - If all candidate issues turn out to be non-issues, return an empty array `[]`.
-9. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
-10. Each object must have:
+10. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+11. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. **CRITICAL**: Read the line number directly from the line prefix in the annotated diff (e.g. `  189: + ...` or `  190:   ...`). Do NOT count or estimate line numbers.
    - `target_code`: The exact line or distinctive snippet of code from the diff that this comment targets.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment (or conclude with `[DISMISSED]` if you changed your mind).
    - `actionable`: Boolean (`true` by default, or `false` if dismissed as a non-issue).
-11. If there are no issues found, return an empty array `[]`.
-12. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
+12. If there are no issues found, return an empty array `[]`.
+13. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
 """
 
     def _align_suggestion_indentation(self, body: str, path: str, line: int, parsed_diff: ParsedDiff) -> str:
@@ -1131,6 +1134,83 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 
         return True
 
+    def _is_layout_inversion_hallucination(self, path: str, body: str, line: Optional[int] = None) -> bool:
+        """
+        Detects before/after diff inversion hallucinations where the AI claims a class layout
+        ordering violation (e.g. constructor should be above static factories, or static factories
+        below constructors) when the surrounding source code already places them in that exact order.
+        """
+        if not path or not path.endswith(".java") or not getattr(self, "inspector", None):
+            return False
+
+        body_lower = body.lower()
+        layout_triggers = [
+            "class layout",
+            "member sequence",
+            "placed directly below constructor",
+            "placed directly above",
+            "below constructors",
+            "above constructors",
+            "below static factories",
+            "above static factories",
+            "static factory methods",
+        ]
+        if not any(trigger in body_lower for trigger in layout_triggers):
+            return False
+
+        resolved_path = self.inspector._resolve_safe_path(path)
+        if not resolved_path or not os.path.isfile(resolved_path):
+            return False
+
+        try:
+            with open(resolved_path, "r", encoding="utf-8", errors="replace") as f:
+                lines = f.readlines()
+        except Exception:
+            return False
+
+        file_text = "".join(lines)
+        class_match = re.search(r"\b(?:public\s+|protected\s+|private\s+)?(?:abstract\s+)?class\s+(\w+)", file_text)
+        if not class_match:
+            return False
+        class_name = class_match.group(1)
+
+        # Find line numbers of constructors (1-indexed)
+        constructor_pattern = re.compile(r"^\s*(?:public|protected|private)?\s*" + re.escape(class_name) + r"\s*\(")
+        constructor_lines = [i for i, l in enumerate(lines, start=1) if constructor_pattern.search(l)]
+
+        # Find line numbers of static factory/helper methods
+        static_method_pattern = re.compile(r"^\s*public\s+static\s+(?:<[^>]+>\s+)?[A-Za-z0-9_<>\[\],\s]+\s+(\w+)\s*\(")
+        static_factory_lines = [i for i, l in enumerate(lines, start=1) if static_method_pattern.search(l)]
+
+        # Check Claim 1: Constructor should be above static factories / static factories below constructors
+        claims_constructor_above_static = (
+            re.search(r"static (?:factory )?methods?.*(?:below|after).*constructor", body_lower)
+            or re.search(r"constructor.*(?:above|before).*static", body_lower)
+            or "must be placed directly below constructors" in body_lower
+            or "should be placed directly above the static factory methods" in body_lower
+            or "above any static factory methods" in body_lower
+        )
+        if claims_constructor_above_static and constructor_lines and static_factory_lines:
+            last_constructor = max(constructor_lines)
+            first_static = min(static_factory_lines)
+            if last_constructor < first_static:
+                # The constructor is ALREADY above all static factory methods!
+                return True
+
+        # Check Claim 2: Static factories above instance methods / instance methods below static factories
+        claims_instance_below_static = (
+            re.search(r"instance methods?.*(?:below|after).*static", body_lower)
+            or re.search(r"static.*(?:above|before).*instance", body_lower)
+            or "should remain below the static factories" in body_lower
+        )
+        if claims_instance_below_static and static_factory_lines:
+            last_static = max(static_factory_lines)
+            if line is not None and line > last_static:
+                if not constructor_lines or max(constructor_lines) < min(static_factory_lines):
+                    return True
+
+        return False
+
     def _validate_comments(self, raw_comments: List[Dict[str, Any]], parsed_diff: ParsedDiff) -> List[Dict[str, Any]]:
         severity_rank = {
             "CRITICAL": 1,
@@ -1153,6 +1233,11 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
             # Discard self-retracted comments where the AI thought out loud and concluded no issue / no action needed
             if not self._is_actionable_comment(body, item):
                 logger.info(f"Discarding non-actionable / self-retracted comment on '{path}:{line}': {body[:60]}...")
+                continue
+
+            # Discard before/after layout inversion hallucinations where class members are already correctly ordered
+            if self._is_layout_inversion_hallucination(path, body, line):
+                logger.info(f"Discarding layout inversion hallucination on '{path}:{line}': {body[:60]}...")
                 continue
 
             # Ensure line number is a positive int
