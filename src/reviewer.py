@@ -925,26 +925,29 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
    In Java, ANY method parameter or local variable sharing a field's name strictly shadows that field, regardless of type. If a method parameter is named `holder`, accessing `this.holder` is MANDATORY to access the class field. NEVER claim `this.` is unnecessary or suggest removing it when a parameter or local variable has the same name, and NEVER suggest changes that produce self-referential calls (e.g. `holder.is(holder)` or `x.equals(x)`).
 8. **Formatter Precedence & Empty Method Bodies**:
    Single-line empty method bodies (`{{}}`) such as `public static void init() {{}}`, no-op callbacks, or empty constructors are standard, clean, and enforced by automated repository formatters (Spotless / Immaculate). NEVER instruct authors to expand empty `{{}}` blocks across multiple lines, and NEVER flag empty initialization methods (`init()`, lifecycle hooks) as dead code.
-9. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-10. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
+9. **Service SPI Signatures & Covariant Registrars**:
+   - NEVER suggest stripping parameters (such as `ResourceKey` registry keys) from low-level service interfaces (SPIs like `RegistrationService`, e.g. `createDataComponents`) to force consistency with other factory methods; low-level SPIs require full parameterization to support non-standard registries (e.g. custom component registries).
+   - NEVER suggest composing or delegating from specialized registrars (`ItemsRegistrar`, `BlocksRegistrar`) to a base generic registrar (`FabricRegistrar<T>`); generic registrars return `ExtendedHolder<T, I>`, which breaks covariant return types (`ItemHolder<I>`, `BlockHolder<B>`) and forces redundant allocations and re-wrapping.
+10. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
+11. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
    ```suggestion
    exact replacement code
    ```
-11. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
+12. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
    If while drafting a comment you realize there is actually no genuine issue (e.g. you notice parameter shadowing, intentional fallback, or that a rule does not apply):
    - Conclude the comment body with `[DISMISSED]` (e.g., `...So this is mandatory! [DISMISSED]`), or set `"actionable": false`.
    - The review engine will automatically recognize that you changed your mind and will discard the comment so it does not pollute the review!
    - If all candidate issues turn out to be non-issues, return an empty array `[]`.
-12. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
-13. Each object must have:
+13. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+14. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. **CRITICAL**: Read the line number directly from the line prefix in the annotated diff (e.g. `  189: + ...` or `  190:   ...`). Do NOT count or estimate line numbers.
    - `target_code`: The exact line or distinctive snippet of code from the diff that this comment targets.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment (or conclude with `[DISMISSED]` if you changed your mind).
    - `actionable`: Boolean (`true` by default, or `false` if dismissed as a non-issue).
-14. If there are no issues found, return an empty array `[]`.
-15. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
+15. If there are no issues found, return an empty array `[]`.
+16. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
 """
 
     def _align_suggestion_indentation(self, body: str, path: str, line: int, parsed_diff: ParsedDiff) -> str:
@@ -1412,6 +1415,41 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 
         return False
 
+    def _is_service_signature_simplification_hallucination(self, path: str, body: str) -> bool:
+        """
+        Detects false positives where the AI suggests removing ResourceKey parameters from
+        service factory methods (like RegistrationService#createDataComponents) to force
+        consistency with createItems/createBlocks. DataComponentType can exist in custom
+        component registries, so the SPI intentionally accepts an explicit ResourceKey parameter.
+        """
+        body_lower = body.lower()
+        if "createdatacomponents" in body_lower:
+            triggers = ["resourcekey", "only take", "simplified to", "registries.data_component_type", "implicit"]
+            if any(term in body_lower for term in triggers):
+                return True
+        return False
+
+    def _is_specialized_registrar_flawed_delegation(self, path: str, body: str) -> bool:
+        """
+        Detects false positives where the AI suggests composing or delegating to a generic
+        base registrar (such as FabricRegistrar<T>) inside specialized registrars (Items, Blocks,
+        Entities). Specialized registrars must return covariant holder subtypes (ItemHolder, BlockHolder);
+        delegating to a generic registrar breaks covariance and forces redundant instance allocations
+        and re-wrapping.
+        """
+        body_lower = body.lower()
+        delegation_words = ["delegat", "compos", "forward"]
+        registrar_targets = ["fabricregistrar", "generic registrar", "base registrar", "registrar<t>"]
+        specialized_words = ["specialized registrar", "fabricitemsregistrar", "fabricblocksregistrar", "subclass", "concrete subclass"]
+
+        has_delegation = any(w in body_lower for w in delegation_words)
+        has_registrar_target = any(t in body_lower for t in registrar_targets)
+        has_specialized = any(s in body_lower for s in specialized_words)
+
+        if has_delegation and has_registrar_target and has_specialized:
+            return True
+        return False
+
     def _validate_comments(self, raw_comments: List[Dict[str, Any]], parsed_diff: ParsedDiff) -> List[Dict[str, Any]]:
         severity_rank = {
             "CRITICAL": 1,
@@ -1449,6 +1487,16 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
             # Discard formatter conflict hallucinations demanding expansion of single-line {} or flagging init() {} as dead code
             if self._is_formatter_conflict_hallucination(path, body, line, parsed_diff, target_code=target_code):
                 logger.info(f"Discarding formatter conflict hallucination on '{path}:{line}': {body[:60]}...")
+                continue
+
+            # Discard false positives suggesting removal of ResourceKey from service factory methods
+            if self._is_service_signature_simplification_hallucination(path, body):
+                logger.info(f"Discarding false positive on '{path}:{line}': SPI factory parameterization is required: {body[:60]}...")
+                continue
+
+            # Discard false positives suggesting flawed delegation from specialized registrars to base generic registrars
+            if self._is_specialized_registrar_flawed_delegation(path, body):
+                logger.info(f"Discarding flawed registrar delegation on '{path}:{line}': breaking covariance: {body[:60]}...")
                 continue
 
             # Ensure line number is a positive int

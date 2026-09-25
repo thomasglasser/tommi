@@ -24,6 +24,13 @@
   * For collections of direct registry singletons (`Item`, `Block`, `MobEffect`, `EntityType`), `ReferenceOpenHashSet` / `Reference2ObjectOpenHashMap` is preferred for maximum performance.
   * For collections of holders or keys (`ExtendedHolder`, `Holder`, `ResourceKey`), `ObjectOpenHashSet` MUST be used because holders/keys rely on value equality (`equals()` / `hashCode()`).
 
+* **DataComponentType Registries & Service Factory Signatures**:
+  * `DataComponentType` is not exclusive to items; Minecraft and mods use data components across multiple registries (e.g. standard items, enchantments, or custom component registries).
+  * In registration SPIs and factory methods (such as `RegistrationService#createDataComponents`), accepting an explicit `ResourceKey<Registry<DataComponentType<?>>>` parameter is an intentional requirement to support non-standard component registries. Convenience overloads defaulting to `Registries.DATA_COMPONENT_TYPE` (e.g. `createDataComponents(String namespace)`) belong in high-level consumer APIs (e.g. `Registrar.java`), NOT in the underlying SPI.
+  * NEVER suggest stripping `ResourceKey` parameters from `createDataComponents` or factory methods to force consistency with `createItems` or `createBlocks`.
+* **Covariant Registrars & Delegation to Base Generic Registrars**:
+  * When specialized registrars (`ItemsRegistrar`, `BlocksRegistrar`, `EntitiesRegistrar`) must return covariant holder subtypes (`ItemHolder<I>`, `BlockHolder<B>`, `EntityHolder<E>`), NEVER suggest delegating registration to a generic base registrar (such as `FabricRegistrar<T>`) that returns base `ExtendedHolder<T, I>`.
+  * Delegating to a generic registrar breaks covariance and forces redundant instance allocations, casts, and object re-wrapping. If entries tracking or registration boilerplate is to be shared, it must be solved in the common API base class (`Registrar<T>`), not through delegation in platform implementations.
 * **SavedData Serialization**: Do NOT flag `.getOrThrow()` calls on `Codec` operations within `SavedData` `save()` or `load()` methods as unhandled exceptions or dangerous; Minecraft's `SavedData` system handles serialization errors internally.
 * **Registry Lookups via BuiltInRegistries (`ResourceKey` vs `ResourceLocation`)**:
   * In Minecraft 1.21.x (and pre-26.x), `ResourceKey#registry()` returns a `ResourceLocation` representing the registry ID, NOT a `ResourceKey`.

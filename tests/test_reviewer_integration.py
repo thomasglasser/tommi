@@ -1780,6 +1780,92 @@ class TestFetchPrDiffFallback(unittest.TestCase):
             "Genuine formatting comment on non-empty method should not be discarded"
         )
 
+    def test_validate_comments_discards_service_signature_simplification(self):
+        from src.diff_parser import parse_unified_diff
+
+        config = TommiConfig(
+            github_token="fake",
+            gemini_api_key="fake",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto",
+        )
+        reviewer = TommiReviewer(config)
+
+        diff_text = (
+            "diff --git a/RegistrationService.java b/RegistrationService.java\n"
+            "--- a/RegistrationService.java\n"
+            "+++ b/RegistrationService.java\n"
+            "@@ -1,5 +1,5 @@\n"
+            " public interface RegistrationService {\n"
+            "+    Registrar.DataComponents createDataComponents(ResourceKey<Registry<DataComponentType<?>>> key, String namespace);\n"
+            " }\n"
+        )
+        parsed = parse_unified_diff(diff_text)
+
+        comment = {
+            "path": "RegistrationService.java",
+            "line": 2,
+            "body": (
+                "Unlike `create(...)`, `createItems`, `createBlocks`, and `createEntities` do not take a `ResourceKey` parameter "
+                "because their registry key is implicit (e.g. `Registries.ITEM`). Similarly, `DataComponentType` registrations belong to `Registries.DATA_COMPONENT_TYPE`. "
+                "Unless there is a requirement to support non-standard component registries, `createDataComponents` should be simplified to only take `String namespace` "
+                "to remain consistent with the other specialized registrar factory methods.\n\n"
+                "```suggestion\n"
+                "    Registrar.DataComponents createDataComponents(String namespace);\n"
+                "```"
+            ),
+            "severity": "WARNING",
+        }
+
+        validated = reviewer._validate_comments([comment], parsed)
+        self.assertEqual(
+            len(validated), 0,
+            "Comment suggesting stripping ResourceKey from createDataComponents SPI must be discarded"
+        )
+
+    def test_validate_comments_discards_specialized_registrar_flawed_delegation(self):
+        from src.diff_parser import parse_unified_diff
+
+        config = TommiConfig(
+            github_token="fake",
+            gemini_api_key="fake",
+            github_repository="test/repo",
+            pr_number=1,
+            model_name="auto",
+        )
+        reviewer = TommiReviewer(config)
+
+        diff_text = (
+            "diff --git a/FabricRegistrationService.java b/FabricRegistrationService.java\n"
+            "--- a/FabricRegistrationService.java\n"
+            "+++ b/FabricRegistrationService.java\n"
+            "@@ -40,7 +40,7 @@\n"
+            "     public static class FabricItemsRegistrar extends Registrar.Items {\n"
+            "+        private final Set<ItemHolder<?>> entries = new ObjectOpenHashSet<>();\n"
+            "     }\n"
+        )
+        parsed = parse_unified_diff(diff_text)
+
+        comment = {
+            "path": "FabricRegistrationService.java",
+            "line": 41,
+            "body": (
+                "While `ObjectOpenHashSet` is correct for holders like `ExtendedHolder` (since holders rely on value equality), "
+                "the concrete subclasses `FabricItemsRegistrar`, `FabricBlocksRegistrar`, `FabricDataComponentsRegistrar`, and `FabricEntitiesRegistrar` "
+                "duplicate this entire collection setup, registration wrapping, and `entries()` view logic.\n\n"
+                "Notice that `FabricRegistrar<T>` implements the exact registration and entry tracking behavior needed. Consider composing or delegating "
+                "to `FabricRegistrar` in the specialized registrars (or sharing default helper implementations where inheritance allows) to keep registration logic DRY."
+            ),
+            "severity": "WARNING",
+        }
+
+        validated = reviewer._validate_comments([comment], parsed)
+        self.assertEqual(
+            len(validated), 0,
+            "Comment suggesting flawed delegation to FabricRegistrar in specialized covariant registrars must be discarded"
+        )
+
 
 
 
