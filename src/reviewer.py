@@ -917,32 +917,21 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 3. **Trust Compiler & Build Verification**: All PRs are verified to compile and build cleanly via Gradle prior to review. NEVER claim there are compilation errors, syntax errors, duplicate method/field definitions, or missing types that the Java compiler would reject. If you think a method is defined twice, you are misreading a method invocation (e.g. inside an `if` condition) or an overload. Do NOT flag compiler errors.
 4. **Verify Full Method Scope for Variables**: NEVER report a parameter or variable as unused unless you have traced the entire method body and confirmed it is completely unreferenced. Check event postings (`NeoForge.EVENT_BUS.post(...)`), constructor arguments, method calls, lambda closures, and return values before alleging an unused parameter.
 5. **Verify Full Class Scope for Methods & Fields**: Surrounding source code for all modified files is provided above in the 'MODIFIED FILES SURROUNDING SOURCE CODE' section. NEVER claim a method, field, helper, or override is unused, never called, or missing without checking the entire class. If a method is called by another method in the class, overrides an interface/parent method, acts as a factory, or listens to events (e.g. `@SubscribeEvent`), it is actively used.
-6. **Respect Learned Architectural Exceptions**:
-   - Do NOT flag sequential `if` fallback assignments (`if (x == null) x = ...; if (x == null) x = ...;`) as candidates for `else if` chains; sequential evaluation is required for fallbacks.
-   - Do NOT flag referencing inner classes or enums via an imported outer class (e.g. `Outer.Inner`).
-   - Do NOT flag fully qualified class names inside Javadoc tags (e.g. `{{@link ...}}`).
-   - Do NOT flag single-statement `.forEach(...)` on collections outside hot paths.
-   - Do NOT flag custom immutable collection view classes (e.g. `ImmutableCollectionView`) that clearly communicate their unmodifiable nature in their name or API contract.
-   - Do NOT suggest removing `this.` qualifiers when a method parameter or local variable shadows the field (e.g. `boolean is(Holder<R> holder)` accessing `this.holder`). NEVER propose suggestions that compare a parameter to itself (e.g. `holder.is(holder)`).
-   - Do NOT claim constructors, static factory methods, or fields are out of sequence without verifying their actual line numbers in the surrounding code. If fields precede constructors, constructors precede static factories, and static factories precede instance methods, the layout is strictly correct. Do NOT make assertions about other classes or subclasses without reading them.
-   - Do NOT instruct the author to relocate methods that the diff just relocated (avoid before/after inversion). Evaluate added lines (+) in their new location.
-   - Do NOT suggest extracting a shared base class across classes that already extend distinct parent/abstract classes (e.g. `FabricItemsRegistrar extends Registrar.Items`). Java enforces single class inheritance; subclasses of different abstract classes cannot inherit from a common base class.
-   - Do NOT flag `ItemHolder#asItem()` returning `get()` as inconsistent with `BlockHolder#asItem()` calling `get().asItem()`; `Item`s are already items, whereas `Block`s must call `.asItem()` to retrieve their item.
-7. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-8. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
+6. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
+7. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
    ```suggestion
    exact replacement code
    ```
-9. Do NOT leave generic praise or comment on valid, unchanged code.
-10. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
-11. Each object must have:
+8. Do NOT leave generic praise or comment on valid, unchanged code.
+9. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+10. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. **CRITICAL**: Read the line number directly from the line prefix in the annotated diff (e.g. `  189: + ...` or `  190:   ...`). Do NOT count or estimate line numbers.
    - `target_code`: The exact line or distinctive snippet of code from the diff that this comment targets.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment.
-12. If there are no issues found, return an empty array `[]`.
-13. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
+11. If there are no issues found, return an empty array `[]`.
+12. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
 """
 
     def _align_suggestion_indentation(self, body: str, path: str, line: int, parsed_diff: ParsedDiff) -> str:
