@@ -1532,6 +1532,13 @@ class TestFetchPrDiffFallback(unittest.TestCase):
                 "is_valid_line": True,
             },
             {
+                "path": "TommyLibConstants.java",
+                "line": 7,
+                "severity": "SUGGESTION",
+                "body": "Utility and constants classes should have a private constructor to prevent unintentional instantiation.",
+                "is_valid_line": True,
+            },
+            {
                 "path": "RealBug.java",
                 "line": 10,
                 "severity": "CRITICAL",
@@ -1546,7 +1553,8 @@ class TestFetchPrDiffFallback(unittest.TestCase):
             {"index": 2, "keep": False, "reason": "Empty method on single line is enforced by Spotless"},
             {"index": 3, "keep": False, "reason": "SPI interface must retain ResourceKey parameter"},
             {"index": 4, "keep": False, "reason": "Delegation would break covariant return types"},
-            {"index": 5, "keep": True, "reason": "Genuine null safety bug"},
+            {"index": 5, "keep": False, "reason": "Utility/constants classes have all-static members and do not need private constructors"},
+            {"index": 6, "keep": True, "reason": "Genuine null safety bug"},
         ]
 
         with patch.object(reviewer, "_execute_review_generation", return_value=json.dumps(mock_verdicts)):

@@ -24,6 +24,10 @@
   * Empty method bodies (e.g., `public static void init() {}`, no-op event handlers, lifecycle callbacks, or empty constructors) are standard, clean, and expected to be written as `{}` on a single line.
   * NEVER suggest expanding empty method bodies (`{}`) across multiple lines; automated formatters (Spotless / Immaculate) automatically collapse empty blocks to `{}` on a single line.
   * NEVER flag empty `init()` or lifecycle methods as dead code; they are active initialization hooks called by platform loaders (Fabric / NeoForge) to force classloading and run static initializers.
+* **Utility & Constants Classes (No Private Constructors)**:
+  * Utility and constants classes (such as `*Constants`, `*Utils`, `*Tags`, `*Helper`) consist of static methods, constants, and/or static factories.
+  * NEVER suggest adding a private constructor (e.g. `private MyClass() {}`) to prevent unintentional instantiation. IntelliJ IDEA natively recognizes classes with all-static members as utility classes, and adding explicit private constructors is unnecessary boilerplate.
+  * Verify that utility and constants classes contain only static members (static fields, static methods, static nested classes). As long as all members are static, the class is valid and must NOT have a private constructor added.
 * **Control Flow & Branching**:
   * Combine boolean conditions with `&&` and `||` wherever possible to avoid unnecessary nested `if` statements.
   * Use `else if` chains rather than isolated `if` statements when branching on the same condition.

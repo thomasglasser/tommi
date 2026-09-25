@@ -937,26 +937,28 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 9. **Service SPI Signatures & Covariant Registrars**:
    - NEVER suggest stripping parameters (such as `ResourceKey` registry keys) from low-level service interfaces (SPIs like `RegistrationService`, e.g. `createDataComponents`) to force consistency with other factory methods; low-level SPIs require full parameterization to support non-standard registries (e.g. custom component registries).
    - NEVER suggest composing or delegating from specialized registrars (`ItemsRegistrar`, `BlocksRegistrar`) to a base generic registrar (`FabricRegistrar<T>`); generic registrars return `ExtendedHolder<T, I>`, which breaks covariant return types (`ItemHolder<I>`, `BlockHolder<B>`) and forces redundant allocations and re-wrapping.
-10. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-11. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
+10. **Utility & Constants Classes (No Private Constructors)**:
+   Utility and constants classes contain only static members (static methods, constants, factories) and do NOT need private constructors. IntelliJ IDEA natively recognizes classes with only static members as utility classes. NEVER instruct authors to add a private constructor (e.g. `private MyConstants() {{}}`) to prevent instantiation.
+11. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
+12. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
    ```suggestion
    exact replacement code
    ```
-12. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
+13. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
    If while drafting a comment you realize there is actually no genuine issue (e.g. you notice parameter shadowing, intentional fallback, or that a rule does not apply):
    - Conclude the comment body with `[DISMISSED]` (e.g., `...So this is mandatory! [DISMISSED]`), or set `"actionable": false`.
    - The review engine will automatically recognize that you changed your mind and will discard the comment so it does not pollute the review!
    - If all candidate issues turn out to be non-issues, return an empty array `[]`.
-13. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
-14. Each object must have:
+14. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+15. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. **CRITICAL**: Read the line number directly from the line prefix in the annotated diff (e.g. `  189: + ...` or `  190:   ...`). Do NOT count or estimate line numbers.
    - `target_code`: The exact line or distinctive snippet of code from the diff that this comment targets.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment (or conclude with `[DISMISSED]` if you changed your mind).
    - `actionable`: Boolean (`true` by default, or `false` if dismissed as a non-issue).
-15. If there are no issues found, return an empty array `[]`.
-16. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
+16. If there are no issues found, return an empty array `[]`.
+17. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
 """
 
     def _align_suggestion_indentation(self, body: str, path: str, line: int, parsed_diff: ParsedDiff) -> str:
@@ -1215,7 +1217,7 @@ Your goal is to ensure 100% precision: eliminate false positives, hallucinations
 
 For every draft comment, evaluate:
 1. Rule Compliance: Does the comment strictly adhere to the repository rules?
-   - Reject comments that contradict rules (e.g. demanding multi-line expansion of empty '{{}}' methods, flagging active static 'init()' hooks as dead code, suggesting stripping 'ResourceKey' from service SPIs, suggesting flawed delegation that breaks covariant return types, or claiming member order is wrong when line numbers confirm it is correct).
+   - Reject comments that contradict rules (e.g. demanding multi-line expansion of empty '{{}}' methods, flagging active static 'init()' hooks as dead code, suggesting adding private constructors to utility/constants classes, suggesting stripping 'ResourceKey' from service SPIs, suggesting flawed delegation that breaks covariant return types, or claiming member order is wrong when line numbers confirm it is correct).
 2. Bug & Type Safety: Would following the advice break compilation, break type covariance, or introduce bugs (e.g. stripping 'this.' when a parameter shadows a field)?
 3. Factual Accuracy: Does the code context actually support the comment's claims?
 4. Genuine Actionability: Is this a genuine defect or concrete improvement? Reject pedantic nitpicks or non-actionable observations.
