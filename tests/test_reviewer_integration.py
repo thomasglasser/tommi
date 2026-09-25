@@ -1546,6 +1546,13 @@ class TestFetchPrDiffFallback(unittest.TestCase):
                 "is_valid_line": True,
             },
             {
+                "path": "BlockHolder.java",
+                "line": 33,
+                "severity": "SUGGESTION",
+                "body": "Following our class layout conventions, static constructing helpers (such as `createBlock`) must be placed directly below the constructors (around line 25) and before instance methods like `toStack`.",
+                "is_valid_line": True,
+            },
+            {
                 "path": "RealBug.java",
                 "line": 10,
                 "severity": "CRITICAL",
@@ -1562,7 +1569,8 @@ class TestFetchPrDiffFallback(unittest.TestCase):
             {"index": 4, "keep": False, "reason": "Delegation would break covariant return types"},
             {"index": 5, "keep": False, "reason": "Utility/constants classes have all-static members and do not need private constructors"},
             {"index": 6, "keep": False, "reason": "Java 21 does not support unnamed variables (_)"},
-            {"index": 7, "keep": True, "reason": "Genuine null safety bug"},
+            {"index": 7, "keep": False, "reason": "createBlock is already directly below constructor; Javadoc and blank lines are not intervening members"},
+            {"index": 8, "keep": True, "reason": "Genuine null safety bug"},
         ]
 
         with patch.object(reviewer, "_execute_review_generation", return_value=json.dumps(mock_verdicts)):
