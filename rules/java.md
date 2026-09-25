@@ -6,9 +6,10 @@
 * **LinkedHashSet & Sequenced Collections**: Do NOT flag standard `LinkedHashSet` as a violation of FastUtil collection rules when sequenced operations (such as `reversed()`) or `SequencedSet` compatibility are required; FastUtil's `ObjectLinkedOpenHashSet` does not support these methods.
 
 ## 2. Language Features & APIs
-* **Javadoc Syntax & Conventions**:
-  * **Single-Line vs. Multi-Line Javadocs**: Use `/** javadoc */` single-line format exclusively for concise, single-line Javadocs to remain clean without being messy. NEVER use `///` comments as `///` is Markdown Javadocs for Java 23+ and not supported in Java 21. Multi-line Javadocs MUST use standard `/** ... */` block syntax.
-  * **Single-Line Field Javadocs**: Single-line field Javadocs MUST use the `/** javadoc */` single-line format. NEVER use `///` comments.
+* **Javadoc & Documentation Comment Conventions**:
+  * **Java 21 vs. Java 23+ (Markdown Javadocs)**:
+    * **Java 21 (e.g. Minecraft 1.21.x)**: ALWAYS use standard Javadoc syntax. Use `/** javadoc */` single-line format exclusively for concise single-line Javadocs to remain clean without being messy. NEVER use `///` comments in Java 21 as they are treated as non-doc comments. Multi-line documentation MUST use standard `/** ... */` block syntax.
+    * **Java 23+ (e.g. Minecraft 26.1 which uses Java 25)**: EXCLUSIVELY use Markdown documentation comments (`///`) for all single-line and multiline documentation. NEVER use legacy `/** ... */` syntax in Java 23+ codebases.
   * **Javadoc Scope**: Javadocs are NOT required on private members, private helper methods, or private inner classes/records. Do NOT suggest adding Javadocs to private members.
   * Class Javadocs are expected on APIs and core abstractions, but implementation details (`impl`) do not need them unless necessary.
   * Place separate sentences on separate lines within Javadocs.
