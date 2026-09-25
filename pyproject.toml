@@ -20,5 +20,8 @@ dependencies = [
 tommi = "src.cli:main"
 
 [tool.setuptools]
-packages = ["src"]
+packages = ["src", "rules"]
+
+[tool.setuptools.package-data]
+rules = ["*.md"]
 

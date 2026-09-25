@@ -45,9 +45,21 @@ def load_all_rules(repo_workspace_dir: Optional[str] = None, tommi_rules_dir: Op
 
     # 1. Resolve TOMMI base rules directory
     if not tommi_rules_dir:
-        # Default: rules/ directory alongside src/ or parent
+        # Try finding rules package directly via Python module resolution
+        try:
+            import rules as tommi_rules_pkg
+            if hasattr(tommi_rules_pkg, "__file__") and tommi_rules_pkg.__file__:
+                pkg_dir = os.path.dirname(os.path.abspath(tommi_rules_pkg.__file__))
+                if os.path.isdir(pkg_dir):
+                    tommi_rules_dir = pkg_dir
+        except Exception:
+            pass
+
+    if not tommi_rules_dir:
+        # Fallback: rules/ directory alongside src/ or parent
         possible_dirs = [
             os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "rules"),
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "rules"),
             os.path.join(os.getcwd(), "rules"),
             "/rules"
         ]
