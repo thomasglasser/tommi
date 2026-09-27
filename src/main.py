@@ -260,6 +260,7 @@ def main():
                 pr_title=pr.title,
                 pr_body=pr.body or "",
                 pr_url=pr.url,
+                enable_tools=config.enable_tools,
             )
 
             unreviewed = getattr(reviewer, "unreviewed_files", [])

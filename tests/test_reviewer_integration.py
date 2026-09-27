@@ -1671,6 +1671,41 @@ class TestFetchPrDiffFallback(unittest.TestCase):
         self.assertEqual(comments[0]["body"], "Valid critical issue")
         self.assertEqual(comments[0]["severity"], "CRITICAL")
 
+    def test_secondary_validation_filters_unverified_return_type_hallucination(self):
+        config = TommiConfig(
+            github_token="fake",
+            gemini_api_key="fake",
+            github_repository="owner/repo",
+            pr_number=1,
+            enable_secondary_validation=True,
+        )
+        reviewer = TommiReviewer(config)
+        diff = "diff --git a/src/Action.java b/src/Action.java\n@@ -1,3 +1,3 @@\n+Player p = context.level().getServer().getPlayerList().getPlayer(uuid);\n"
+
+        primary_comments = [
+            {
+                "path": "src/Action.java",
+                "line": 1,
+                "body": "context.level() returns a Level where getServer() returns null on client side. Potential NullPointerException.",
+                "severity": "CRITICAL",
+            }
+        ]
+        audit_verdicts = [
+            {
+                "index": 0,
+                "keep": False,
+                "reason": "Reviewer assumed context.level() returns Level without verifying return type from class definition. Speculative NPE warning rejected.",
+            }
+        ]
+
+        with patch.object(reviewer, "_execute_review_generation", side_effect=[
+            json.dumps(primary_comments),
+            json.dumps(audit_verdicts),
+        ]), patch("src.reviewer.resolve_candidate_models", return_value=["gemini-2.5-flash"]):
+            comments = reviewer.review_diff(diff)
+
+        self.assertEqual(len(comments), 0)
+
 
 
 

@@ -25,6 +25,7 @@ class TommiConfig:
     thinking_budget: int = 2048
     max_inline_comments: Optional[int] = None
     enable_secondary_validation: bool = True
+    enable_tools: bool = False
 
     @classmethod
     def from_env(cls) -> "TommiConfig":
@@ -77,6 +78,9 @@ class TommiConfig:
         enable_secondary_validation_str = os.environ.get("ENABLE_SECONDARY_VALIDATION", "true").strip().lower()
         enable_secondary_validation = enable_secondary_validation_str in ("true", "1", "yes")
 
+        enable_tools_str = os.environ.get("ENABLE_TOOLS", "true").strip().lower()
+        enable_tools = enable_tools_str in ("true", "1", "yes")
+
         return cls(
             gemini_api_key=gemini_api_key,
             github_repository=github_repository,
@@ -98,6 +102,7 @@ class TommiConfig:
             thinking_budget=thinking_budget,
             max_inline_comments=max_inline_comments,
             enable_secondary_validation=enable_secondary_validation,
+            enable_tools=enable_tools,
         )
 
     @classmethod
@@ -109,6 +114,7 @@ class TommiConfig:
         workspace_dir: Optional[str] = None,
         tommi_repo: str = "thomasglasser/tommi",
         enable_secondary_validation: bool = True,
+        enable_tools: bool = True,
     ) -> "TommiConfig":
         """
         Creates a TommiConfig tailored for local offline diff reviews without requiring GitHub tokens or PR IDs.
@@ -150,4 +156,6 @@ class TommiConfig:
             thinking_budget=thinking_budget,
             event_name="local_review",
             enable_secondary_validation=enable_secondary_validation,
+            enable_tools=enable_tools,
         )
+
