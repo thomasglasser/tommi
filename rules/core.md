@@ -16,7 +16,7 @@
   * **Static Factory & Helper Methods**: Static constructing helpers (e.g., `of(...)`, `perching(...)`, `create(...)`) MUST be placed directly below constructors and before instance methods. Static `builder()` accessors may be placed directly above the nested builder class/record definition.
   * **Instance & Helper Methods**: Keep method organization clean and navigable. Do NOT strictly enforce visibility order (e.g. public before private); helper, protected, or private methods may be placed directly below the methods that use them or at the bottom of the method section.
   * **Inner Classes, Records & Enums**: MUST be placed at the very bottom of the class below all methods. Do NOT flag inner classes, records, or enums as misplaced when declared at the bottom, even if referenced higher up.
-* **Local Classes in Methods**: Do NOT flag local classes declared inside methods when used for lambda workarounds or local context as misplaced inner classes.
+* **Local Classes in Methods**: Do NOT flag local classes declared inside method bodies (e.g., for mutable state capture in lambdas, builder helpers, or local context) as class overhead, performance issues, or misplaced inner classes; local classes are a standard Java pattern for managing mutable state across lambdas.
 * **Variable Placement**: Declare variables right above where they are used, rather than at the top of a method.
 * **Single-Statement Braces**: Omit curly braces (`{}`) for single-statement blocks (e.g., single-line `if`, `for`, `while`, or early `return`). The body statement MUST NOT be placed on the same line as the control statement; ALWAYS place it indented on a separate line. When wrapping multi-line nested `if/else` control flow, retain outer braces to eliminate dangling-else ambiguity.
 * **Control Flow & Branching**:
@@ -54,4 +54,3 @@
 * **Complete Fixes**: Do not mark review comments as resolved without actually fixing the underlying issue.
 * **Trust the Compiler**: All pull requests are verified to compile cleanly with javac/Gradle prior to review. NEVER report compilation errors, syntax errors, duplicate method/field declarations, or missing imports. Do not mistake a method call in an expression for a duplicate declaration.
 * **Accurate Unused Parameter Checks**: NEVER claim a parameter or variable is unused without inspecting the entire method body, including event bus postings (`NeoForge.EVENT_BUS.post(...)`), constructor arguments, method calls, and lambda closures.
-
