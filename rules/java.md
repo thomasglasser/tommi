@@ -12,7 +12,7 @@
     1. Identifiers & Keys: `ResourceLocation` / `Identifier`, `ResourceKey`, `TagKey`.
     2. Value Wrappers & Holders: `ExtendedHolder`, `Holder`, `Optional`, custom wrapper records.
     3. Primitives & Math: `String`, `UUID`, `BlockPos`, `Vec3`, `Vector3f`, components.
-* **Immutability for Public APIs**: ALWAYS prefer Guava immutable collection types (`ImmutableList`, `ImmutableSet`, `ImmutableMap`) or custom unmodifiable wrapper classes that clearly communicate immutability in their class name/API (e.g., `ImmutableCollectionView`) for public APIs. Custom immutable collection views are completely acceptable as long as their immutability is clear. NEVER use or suggest raw `Collections.unmodifiable*` wrappers that return generic mutable `Collection<E>` / `List<E>` types as API signatures.
+* **Immutability for Public APIs & Collection Queries**: ALWAYS prefer Guava immutable collection types (`ImmutableList`, `ImmutableSet`, `ImmutableMap`) or custom unmodifiable wrapper classes that clearly communicate immutability in their class name/API (e.g., `ImmutableCollectionView`) for public APIs and collection queries. When gathering items or elements from providers/containers (e.g., `collect*()`, `get*Targets()`), ALWAYS return `ImmutableSet<T>` or `ImmutableList<T>`. NEVER use or suggest raw mutable collections (`ObjectArrayList`, `ArrayList`, `HashSet`) or generic mutable interface types as public API return signatures.
 * **LinkedHashSet & Sequenced Collections**: Do NOT flag standard `LinkedHashSet` as a violation of FastUtil collection rules when sequenced operations (such as `reversed()`) or `SequencedSet` compatibility are required; FastUtil's `ObjectLinkedOpenHashSet` does not support these methods.
 
 ## 2. Language Features & APIs

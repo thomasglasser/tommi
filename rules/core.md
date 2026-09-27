@@ -62,6 +62,7 @@
 * **No `var`**: Do NOT use the `var` keyword in Java. Explicitly define variable types.
 * **Static Imports**: Do NOT use static imports.
 * **Return Types**: Design methods to return informative types or booleans (e.g., success/failure or cancellation) rather than relying on side effects.
+* **Complementary Boolean Predicates**: When defining complementary boolean methods (e.g., `isDirect()` vs. `isNested()`, `isEmpty()` vs. `isNotEmpty()`), NEVER duplicate the underlying condition or type check across both methods. ALWAYS define one canonical implementation and implement the complementary method as its direct negation (`return !isNested();`).
 
 ## 4. Git & Review Etiquette
 * **No Meaningless or "No Changes Needed" Comments**: NEVER post review comments that conclude with "no action needed", "no further changes needed", "just noting", or purely praise/acknowledge acceptable patterns without requesting an actionable code change. Every review comment MUST propose a concrete, actionable improvement.

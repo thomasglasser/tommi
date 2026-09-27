@@ -8,6 +8,7 @@
 * **Dedicated Server Safety**: NEVER use client-only classes (`Minecraft`, `KeyMapping`, `LocalPlayer`, GUI screens) in common code. This will crash dedicated servers.
 * **Side-Safe Access**: Use client-safe utilities (such as `ClientUtils.getLocalPlayer()` or distribution executors) when referencing client objects from shared logic.
 * **Server Authority**: Perform physics, state mutations, movement delta calculations, and game logic on the server, not the client.
+* **Packet Payload Type Qualification**: When declaring custom packet payloads implementing `CustomPacketPayload` or `MineraculousPacketPayload`, NEVER qualify the inner `Type` class as `CustomPacketPayload.Type<...>`. Import `net.minecraft.network.protocol.common.custom.CustomPacketPayload.Type` (or reference unqualified `Type<...>`) directly.
 
 ## 2. Registry & Data Management
 
