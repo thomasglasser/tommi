@@ -1706,6 +1706,42 @@ class TestFetchPrDiffFallback(unittest.TestCase):
 
         self.assertEqual(len(comments), 0)
 
+    def test_secondary_validation_filters_get_or_create_npe_hallucination(self):
+        config = TommiConfig(
+            github_token="fake",
+            gemini_api_key="fake",
+            github_repository="owner/repo",
+            pr_number=1,
+            enable_secondary_validation=True,
+        )
+        reviewer = TommiReviewer(config)
+        diff = "diff --git a/src/Action.java b/src/Action.java\n@@ -1,3 +1,3 @@\n+CustomizationData data = player.getData(MIRACULOUSES).get(miraculous).customizationData();\n"
+
+        primary_comments = [
+            {
+                "path": "src/Action.java",
+                "line": 1,
+                "body": "Calling .customizationData() directly on the result of get(miraculous) is unsafe because get(miraculous) can return null, leading to a NullPointerException.",
+                "severity": "CRITICAL",
+            }
+        ]
+        audit_verdicts = [
+            {
+                "index": 0,
+                "keep": False,
+                "reason": "Reviewer assumed .get(miraculous) returns null without verifying contract; container get methods often implement getOrCreate (computeIfAbsent). Speculative NPE warning rejected.",
+            }
+        ]
+
+        with patch.object(reviewer, "_execute_review_generation", side_effect=[
+            json.dumps(primary_comments),
+            json.dumps(audit_verdicts),
+        ]), patch("src.reviewer.resolve_candidate_models", return_value=["gemini-2.5-flash"]):
+            comments = reviewer.review_diff(diff)
+
+        self.assertEqual(len(comments), 0)
+
+
 
 
 

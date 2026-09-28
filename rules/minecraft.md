@@ -45,9 +45,10 @@
 * **Empty Datagen Provider Elimination**: Do NOT create or register empty datagen tag provider classes when no tags are defined for that registry. Pass `CompletableFuture.completedFuture(null)` for unused provider dependencies.
 * **Constants**: Use vanilla and NeoForge constants wherever possible (e.g., `Block` constants in `setBlock`, `SharedConstants.TICKS_PER_SECOND` for AI timeouts/cooldowns).
 * **Built-in & Library Utils**: Leverage existing library utilities (such as `TommyLib`, `AnimationUtils`, `StreamCodecs`) instead of duplicating functionality.
-* **Data Attachments**:
+* **Data Attachments & Container get() Contracts**:
   * When reading data attachments, avoid duplicate lookups (e.g. store `player.getData(...)` in a variable).
   * Do NOT call `remove()` repeatedly if the attachment is absent; check `.isPresent()` first.
+  * In data attachment objects, capabilities, and game data containers, `get(key)` methods frequently use `computeIfAbsent` or default initialization (acting as `getOrCreate`). NEVER flag `.get(key)` as returning null or suggest null-checking its result unless its method contract explicitly specifies `@Nullable` or returns an `Optional`.
 
 ## 3. Rendering & GUI Standards
 * **GUI Lighting**: When rendering items or custom models in a GUI context (e.g., `BlockEntityWithoutLevelRenderer`, `GeoItemRenderer`), ALWAYS force the light level to `LightTexture.FULL_BRIGHT` (`15728880`).
