@@ -1741,12 +1741,89 @@ class TestFetchPrDiffFallback(unittest.TestCase):
 
         self.assertEqual(len(comments), 0)
 
+    def test_parse_and_repair_json_malformed_suggestion_key(self):
+        """
+        Verifies that when a model outputs malformed GitHub suggestions treating
+        ```suggestion": " as a JSON pseudo-key inside the body property,
+        _parse_and_repair_json repairs the syntax and parses the comments cleanly.
+        """
+        config = TommiConfig(github_token="fake", gemini_api_key="fake", github_repository="owner/repo", pr_number=1)
+        reviewer = TommiReviewer(config)
 
+        raw_malformed = (
+            '[\n'
+            '  {\n'
+            '    "path": "src/main/java/dev/thomasglasser/mineraculous/api/world/level/storage/loot/MineraculousLootContextParamSets.java",\n'
+            '    "line": 15,\n'
+            '    "severity": "SUGGESTION",\n'
+            '    "target_code": "    /**",\n'
+            '    "body": "In Java 23+ (Minecraft 26.1+), markdown documentation comments (///) are the new standard conventions instead of legacy block comments (/** */). Please use markdown documentation comments here to adhere to the project style guide.\\n\\n```suggestion": "    /// The static registry of loot context parameter sets defined by Mineraculous.\\n```",\n'
+            '    "actionable": true\n'
+            '  }\n'
+            ']'
+        )
 
+        parsed = reviewer._parse_and_repair_json(raw_malformed)
+        self.assertEqual(len(parsed), 1)
+        comment = parsed[0]
+        self.assertEqual(comment["line"], 15)
+        self.assertEqual(comment["severity"], "SUGGESTION")
+        self.assertIn("```suggestion", comment["body"])
+        self.assertIn("/// The static registry", comment["body"])
+        self.assertTrue(comment["body"].endswith("```"))
+        self.assertTrue(comment["actionable"])
 
+    def test_parse_and_repair_json_separate_suggestion_keys(self):
+        """
+        Verifies that if an AI model outputs 'suggestion' or '```suggestion' as a separate JSON key,
+        _parse_and_repair_json normalizes and appends it to 'body'.
+        """
+        config = TommiConfig(github_token="fake", gemini_api_key="fake", github_repository="owner/repo", pr_number=1)
+        reviewer = TommiReviewer(config)
 
+        raw_json = json.dumps([
+            {
+                "path": "src/Foo.java",
+                "line": 10,
+                "severity": "SUGGESTION",
+                "body": "Prefer fastutil collection.",
+                "suggestion": "ObjectArrayList<String> list = new ObjectArrayList<>();"
+            },
+            {
+                "path": "src/Bar.java",
+                "line": 20,
+                "severity": "SUGGESTION",
+                "body": "Use new Javadoc syntax.",
+                "```suggestion": "/// Static constant."
+            }
+        ])
 
+        parsed = reviewer._parse_and_repair_json(raw_json)
+        self.assertEqual(len(parsed), 2)
 
+        self.assertIn("```suggestion\nObjectArrayList<String>", parsed[0]["body"])
+        self.assertNotIn("suggestion", parsed[0])
 
+        self.assertIn("```suggestion\n/// Static constant.", parsed[1]["body"])
+        self.assertNotIn("```suggestion", parsed[1])
 
+    def test_parse_and_repair_json_unclosed_suggestion_block(self):
+        """
+        Verifies that if an AI model outputs an unclosed suggestion block,
+        _parse_and_repair_json cleanly appends closing backticks.
+        """
+        config = TommiConfig(github_token="fake", gemini_api_key="fake", github_repository="owner/repo", pr_number=1)
+        reviewer = TommiReviewer(config)
 
+        raw_json = json.dumps([
+            {
+                "path": "src/Foo.java",
+                "line": 10,
+                "severity": "SUGGESTION",
+                "body": "Improve code style.\n\n```suggestion\nint x = 2;"
+            }
+        ])
+
+        parsed = reviewer._parse_and_repair_json(raw_json)
+        self.assertEqual(len(parsed), 1)
+        self.assertTrue(parsed[0]["body"].endswith("\n```"))

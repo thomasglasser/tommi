@@ -181,21 +181,43 @@ class TommiReviewer:
 
         text = raw_text.strip()
 
+        def _normalize_comment_item(item: Any) -> Any:
+            if not isinstance(item, dict):
+                return item
+            # If the model separated suggestion into its own key (e.g. "suggestion" or "```suggestion")
+            for k in ("suggestion", "```suggestion", "suggested_code"):
+                if k in item and item[k]:
+                    sugg_val = str(item[k]).strip()
+                    body_val = str(item.get("body", "")).strip()
+                    if "```suggestion" not in body_val:
+                        if not sugg_val.startswith("```suggestion"):
+                            sugg_val = f"```suggestion\n{sugg_val}\n```"
+                        item["body"] = f"{body_val}\n\n{sugg_val}".strip()
+                    item.pop(k, None)
+
+            # Ensure any unclosed suggestion block in body is closed
+            if "body" in item and isinstance(item["body"], str):
+                body_str = item["body"]
+                if "```suggestion" in body_str and body_str.count("```") % 2 != 0:
+                    item["body"] = body_str.rstrip() + "\n```"
+
+            return item
+
         def _extract_comments(data: Any) -> Optional[List[Dict[str, Any]]]:
             if isinstance(data, list):
                 if not data or all(isinstance(item, dict) for item in data):
-                    return data
+                    return [_normalize_comment_item(item) for item in data]
             elif isinstance(data, dict):
                 for key in ("comments", "reviews", "review_comments", "items", "data"):
                     val = data.get(key)
                     if isinstance(val, list) and (not val or all(isinstance(item, dict) for item in val)):
-                        return val
+                        return [_normalize_comment_item(item) for item in val]
                 if "path" in data and "line" in data:
-                    return [data]
+                    return [_normalize_comment_item(data)]
                 for val in data.values():
                     if isinstance(val, list) and val and all(isinstance(item, dict) for item in val):
-                        return val
-                return [data]
+                        return [_normalize_comment_item(item) for item in val]
+                return [_normalize_comment_item(data)]
             return None
 
         def _try_parse(candidate: str) -> Optional[List[Dict[str, Any]]]:
@@ -206,16 +228,37 @@ class TommiReviewer:
             except Exception:
                 return None
 
+        def _sanitize_malformed_suggestions(s: str) -> str:
+            if "```suggestion" not in s:
+                return s
+            # Repair malformed colon-assignment syntax:
+            # "body": "...\n\n```suggestion": "...\n```" -> "body": "...\n\n```suggestion\n...\n```"
+            pattern = re.compile(r'```suggestion(?:\\[rn]|\r|\n)*"?\s*:\s*(?:\\[rn]|\r|\n)*"?')
+            return pattern.sub(r'```suggestion\\n', s)
+
         # 1. Direct JSON parse
         parsed = _try_parse(text)
         if parsed is not None:
             return parsed
 
-        # 2. Extract from markdown code fences ```json ... ``` or ``` ... ```
-        for match in re.finditer(r"```(?:json)?\s*([\[{].*?[\]}])\s*```", text, re.DOTALL):
-            parsed = _try_parse(match.group(1))
+        # 1b. Direct JSON parse on sanitized text
+        sanitized_text = _sanitize_malformed_suggestions(text)
+        if sanitized_text != text:
+            parsed = _try_parse(sanitized_text)
             if parsed is not None:
                 return parsed
+
+        # 2. Extract from markdown code fences ```json ... ``` or ``` ... ```
+        for match in re.finditer(r"```(?:json)?\s*([\[{].*?[\]}])\s*```", text, re.DOTALL):
+            block = match.group(1)
+            parsed = _try_parse(block)
+            if parsed is not None:
+                return parsed
+            sanitized_block = _sanitize_malformed_suggestions(block)
+            if sanitized_block != block:
+                parsed = _try_parse(sanitized_block)
+                if parsed is not None:
+                    return parsed
 
         # 3. Strip outer markdown fences if present
         clean_text = text
@@ -227,7 +270,15 @@ class TommiReviewer:
             clean_text = clean_text.rsplit("```", 1)[0]
         clean_text = clean_text.strip()
 
-        candidates = [clean_text, text] if clean_text != text else [text]
+        base_candidates = [clean_text, text] if clean_text != text else [text]
+        candidates = []
+        for cand in base_candidates:
+            if cand not in candidates:
+                candidates.append(cand)
+            sanitized_cand = _sanitize_malformed_suggestions(cand)
+            if sanitized_cand not in candidates:
+                candidates.append(sanitized_cand)
+
         decoder = json.JSONDecoder(strict=False)
 
         # 4. Use raw_decode at every potential JSON array start
@@ -936,10 +987,9 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 5. **Verify Full Class Scope for Methods & Fields**: Surrounding source code for all modified files is provided above in the 'MODIFIED FILES SURROUNDING SOURCE CODE' section. NEVER claim a method, field, helper, or override is unused, never called, or missing without checking the entire class. If a method is called by another method in the class, overrides an interface/parent method, acts as a factory, or listens to events (e.g. `@SubscribeEvent`), it is actively used.
 6. **Verify Method Return Types & Contracts Before Warning**: NEVER assume or guess that a method or context object returns a generic base class (e.g. assuming a method named `.level()` returns base `Level` rather than `ServerLevel`), returns `null`, or causes a `NullPointerException` on chained calls (e.g. `.level().getServer()`, `.get(key).foo()`) without verifying the actual method signature and contract from its class declaration. In particular, container, data attachment, and manager methods named `get(key)` frequently implement `getOrCreate` semantics (e.g. via `computeIfAbsent`) and never return null. If you cannot verify the contract or return type from the available code context or tools, do NOT assume it is nullable or a base type; assume the API contract is intentional, type-safe, and valid.
 7. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-8. **1-Click GitHub Suggestions**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block:
-   ```suggestion
-   exact replacement code
-   ```
+8. **1-Click GitHub Suggestions & JSON Embedding**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block INSIDE the single "body" string:
+   "body": "Explanation of the issue and why it needs fixing.\\n\\n```suggestion\\nexact replacement code\\n```"
+   CRITICAL JSON SYNTAX RULE: The entire review comment (including any ```suggestion ... ``` markdown code block) MUST be enclosed within the single "body" string. NEVER output ```suggestion as a JSON property key, and NEVER put a colon or quotes like ```suggestion": " or ```suggestion: ".
 9. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
    If while drafting a comment you realize there is actually no genuine issue (e.g. you notice parameter shadowing, intentional fallback, or that a rule does not apply):
    - Conclude the comment body with `[DISMISSED]` (e.g., `...So this is mandatory! [DISMISSED]`), or set `"actionable": false`.
