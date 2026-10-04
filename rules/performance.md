@@ -7,4 +7,5 @@
 * **Spline & Particle Operations in Ticks**: Do NOT flag client-side particle spawning or standard spline entity calculations (e.g., target distance queries, segment tracking, facing direction updates) as prohibited tick allocations or performance violations without verifying that new heap objects are actually being allocated.
 * **Throttling**: Throttle expensive repeating checks (e.g. `if (entity.tickCount % 10 == 0)` or `SharedConstants.TICKS_PER_SECOND` intervals) rather than evaluating them every tick.
 * **Hoist Invariants**: Move expensive invariant checks out of loops (e.g. checking whether a screen is open or level is valid should happen before a loop, not inside).
-
+* **Time-Sliced Batch Processing**: When processing massive queues or executing expensive chunk-level modifications, NEVER process the entire queue unconditionally in a single tick. ALWAYS wrap the loop in a time-slice limit (e.g., `System.nanoTime() - startTime > 10_000_000L`) and break early to spread the workload and prevent server watchdog timeouts.
+* **Pre-Filtering Expensive Operations**: When calculating paths, AI behaviors, or assigning massive target collections to entities, ALWAYS pre-filter invalid or out-of-bounds targets (e.g., checking `level.isLoaded(pos)`) BEFORE executing the expensive allocation or pathfinding logic.
