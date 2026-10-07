@@ -67,6 +67,8 @@
 * **Static Imports**: Do NOT use static imports.
 * **Return Types**: Design methods to return informative types or booleans (e.g., success/failure or cancellation) rather than relying on side effects.
 * **Complementary Boolean Predicates**: When defining complementary boolean methods (e.g., `isDirect()` vs. `isNested()`, `isEmpty()` vs. `isNotEmpty()`), NEVER duplicate the underlying condition or type check across both methods. ALWAYS define one canonical implementation and implement the complementary method as its direct negation (`return !isNested();`).
+* **Repeated Accessor Local Variable Extraction**: When retrieving an object or `ItemStack` via an accessor method (e.g., `getMainHandItem()`) and performing multiple successive mutations or calls on it, ALWAYS extract it to a descriptive local variable. NEVER call the accessor repeatedly across consecutive statements.
+* **Redundant Guard Flag Inlining**: NEVER allocate single-use transient boolean variables (e.g., `boolean shouldDoAction = condition; if (shouldDoAction) ...`) solely to hold a condition ahead of an `if` block, unless mutating preceding state would alter the condition and operations cannot be reordered naturally. ALWAYS evaluate conditions directly in the guard statement.
 
 ## 4. Git & Review Etiquette
 * **No Meaningless or "No Changes Needed" Comments**: NEVER post review comments that conclude with "no action needed", "no further changes needed", "just noting", or purely praise/acknowledge acceptable patterns without requesting an actionable code change. Every review comment MUST propose a concrete, actionable improvement.

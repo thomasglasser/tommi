@@ -49,6 +49,8 @@
   * When reading data attachments, avoid duplicate lookups (e.g. store `player.getData(...)` in a variable).
   * Do NOT call `remove()` repeatedly if the attachment is absent; check `.isPresent()` first.
   * In data attachment objects, capabilities, and game data containers, `get(key)` methods frequently use `computeIfAbsent` or default initialization (acting as `getOrCreate`). NEVER flag `.get(key)` as returning null or suggest null-checking its result unless its method contract explicitly specifies `@Nullable` or returns an `Optional`.
+* **Centralized Domain State Mutator Enforcement**: When a domain state enum or model provides centralized static mutation or accessor helpers (e.g., `PowerState.set(stack, state, level)` / `PowerState.get(stack)`), NEVER suggest or use direct data component operations (`stack.set(COMPONENT, ...)` / `stack.getOrDefault(COMPONENT, ...)`). Centralized helpers encapsulate essential state transitions, timestamps, and validation that direct component calls bypass.
+* **Reactive Lifecycle Normalization vs. Intrusive Searches**: NEVER suggest or implement wide synthetic traversal loops across player inventories, container menus, cursor stacks, or nearby world entities to search for and update item stacks upon unequip or lifecycle events. Item state normalization MUST occur reactively within the item's own lifecycle methods (e.g., `inventoryTick`, `onEquip`).
 
 ## 3. Rendering & GUI Standards
 * **GUI Lighting**: When rendering items or custom models in a GUI context (e.g., `BlockEntityWithoutLevelRenderer`, `GeoItemRenderer`), ALWAYS force the light level to `LightTexture.FULL_BRIGHT` (`15728880`).
