@@ -8,6 +8,7 @@
 * **Constant Naming**: `public static final` (PSF) fields MUST use `CAPITAL_SNAKE_CASE`.
 * **Pluralization**: Be accurate with plurals (e.g., `miraculouses`, `options` instead of `option` for collections).
 * **Accessor Naming in Holder & Registry Types**: In registration, holder, and data wrapper objects, prefer naming accessors after the property itself (e.g., `id()`, `key()`, `registry()`, `entries()`, `namespace()`) omitting the `get` prefix, matching Java record and modern API conventions.
+* **Inventory Slot Variable Naming**: In inventory slot systems and utilities, ALWAYS name variables and parameters referencing slots (such as `InventorySlot` or `BoundInventorySlot`) `slot`. NEVER use `target` or vague nouns for slot variables.
 
 ## 2. Layout & Structure
 * **Class Layout & Member Sequence**:
@@ -42,6 +43,7 @@
   * Use `else if` chains rather than isolated `if` statements when branching on the same condition.
   * **Sequential Fallback Checks**: Do NOT suggest converting sequential `if` fallback assignments (e.g., `if (x == null) x = ...; if (x == null) x = ...;`) into `else if` chains; sequential execution is required to evaluate previous fallback assignments.
   * **Compound Condition Branching**: Do NOT flag condition checks in `else` or `else if` branches as redundant when the preceding `if` statement uses a compound boolean condition (`&&` or `||`); entering the `else` branch only implies the overall condition evaluated to false, not which specific sub-condition failed.
+  * **Lower & Upper Bound Math Helpers**: ALWAYS use `Math.max(val, min)` or `Math.min(val, max)` to enforce minimum or maximum scalar thresholds (e.g., minimum item counts, timeouts). NEVER use ternary expressions (e.g., `count > 0 ? count : 1`) for simple numerical bounding.
 * **Strict Early Guard Returns over Deep Nesting**: Instead of wrapping the remainder of a method's logic inside an `if (obj != null) { ... }` block, ALWAYS invert the condition to `if (obj == null) return;` (or `continue`/`break`) to flatten indentation and keep control flow readable.
 * **Spacing**: Avoid unnecessary blank lines. Keep closely related logic tightly grouped.
 * **Section Comment Cleanliness**: Do NOT use decorative ASCII borders, divider lines, or multi-line section banners (e.g., `// ==========================================`). Use concise, plain single-line section headers (e.g., `// Side-safe accessors`, `// Shaders`, `// Assets`).
@@ -69,6 +71,7 @@
 * **Complementary Boolean Predicates**: When defining complementary boolean methods (e.g., `isDirect()` vs. `isNested()`, `isEmpty()` vs. `isNotEmpty()`), NEVER duplicate the underlying condition or type check across both methods. ALWAYS define one canonical implementation and implement the complementary method as its direct negation (`return !isNested();`).
 * **Repeated Accessor Local Variable Extraction**: When retrieving an object or `ItemStack` via an accessor method (e.g., `getMainHandItem()`) and performing multiple successive mutations or calls on it, ALWAYS extract it to a descriptive local variable. NEVER call the accessor repeatedly across consecutive statements.
 * **Redundant Guard Flag Inlining**: NEVER allocate single-use transient boolean variables (e.g., `boolean shouldDoAction = condition; if (shouldDoAction) ...`) solely to hold a condition ahead of an `if` block, unless mutating preceding state would alter the condition and operations cannot be reordered naturally. ALWAYS evaluate conditions directly in the guard statement.
+* **Context Decoupling on Bound Abstractions**: When designing methods that accept bound holder or target abstractions that already encapsulate their context or carrier, NEVER pass redundant environment parameters (e.g., `Level`, `ServerLevel`) if the method only interacts with the holder. Keep method signatures minimal and delegate directly to the holder.
 
 ## 4. Git & Review Etiquette
 * **No Meaningless or "No Changes Needed" Comments**: NEVER post review comments that conclude with "no action needed", "no further changes needed", "just noting", or purely praise/acknowledge acceptable patterns without requesting an actionable code change. Every review comment MUST propose a concrete, actionable improvement.
