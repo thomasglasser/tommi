@@ -34,6 +34,10 @@ inputs:
     description: 'Thinking budget in tokens for Gemini reasoning (default: 2048; set to 0 to disable)'
     required: false
     default: '2048'
+  enable-tools:
+    description: 'Enable repository code tracing tools (default: false - reviews diffs directly for speed and quota efficiency)'
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -58,6 +62,7 @@ runs:
         MODEL_NAME: ${{ inputs.model }}
         TOMMI_REPO: ${{ inputs.tommi-repo }}
         THINKING_BUDGET: ${{ inputs.thinking-budget }}
+        ENABLE_TOOLS: ${{ inputs.enable-tools }}
         GITHUB_REPOSITORY: ${{ github.repository }}
         PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
         COMMENT_ID: ${{ github.event.comment.id }}

@@ -521,42 +521,60 @@ class TommiReviewer:
                 thinking_budget=self.config.thinking_budget
             )
 
-        try:
-            final_response = self.client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=final_config,
-            )
-        except Exception as gen_err:
-            final_response = None
-            err_str = str(gen_err).lower()
-            if getattr(final_config, "thinking_config", None) and ("thinking" in err_str or "thought" in err_str):
-                logger.info(f"Model '{model_name}' does not support thinking_config on final turn. Retrying without thinking_config...")
-                final_config.thinking_config = None
-                try:
-                    final_response = self.client.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                        config=final_config,
-                    )
-                except Exception as final_thinking_retry_err:
-                    gen_err = final_thinking_retry_err
-                    err_str = str(gen_err).lower()
+        max_synthesis_attempts = 2
+        final_response = None
+        for synth_attempt in range(max_synthesis_attempts):
+            try:
+                final_response = self.client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=final_config,
+                )
+                break
+            except Exception as gen_err:
+                final_response = None
+                err_str = str(gen_err).lower()
+                if getattr(final_config, "thinking_config", None) and ("thinking" in err_str or "thought" in err_str):
+                    logger.info(f"Model '{model_name}' does not support thinking_config on final turn. Retrying without thinking_config...")
+                    final_config.thinking_config = None
+                    try:
+                        final_response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=final_config,
+                        )
+                        break
+                    except Exception as final_thinking_retry_err:
+                        gen_err = final_thinking_retry_err
+                        err_str = str(gen_err).lower()
 
-            if final_response is None and final_config.response_schema and ("schema" in err_str or "unsupported" in err_str):
-                logger.info(f"Model '{model_name}' does not support response_schema on final turn. Retrying without response_schema...")
-                final_config.response_schema = None
-                try:
-                    final_response = self.client.models.generate_content(
-                        model=model_name,
-                        contents=contents,
-                        config=final_config,
-                    )
-                except Exception as final_schema_retry_err:
-                    gen_err = final_schema_retry_err
+                if final_response is None and final_config.response_schema and ("schema" in err_str or "unsupported" in err_str):
+                    logger.info(f"Model '{model_name}' does not support response_schema on final turn. Retrying without response_schema...")
+                    final_config.response_schema = None
+                    try:
+                        final_response = self.client.models.generate_content(
+                            model=model_name,
+                            contents=contents,
+                            config=final_config,
+                        )
+                        break
+                    except Exception as final_schema_retry_err:
+                        gen_err = final_schema_retry_err
+                        err_str = str(gen_err).lower()
 
-            if final_response is None:
-                raise gen_err
+                is_transient = "429" in err_str or "quota" in err_str or "503" in err_str or "high demand" in err_str or "unavailable" in err_str
+                if final_response is None and is_transient and synth_attempt < max_synthesis_attempts - 1:
+                    delay = extract_retry_delay(gen_err)
+                    wait_sec = (delay + 1) if (delay is not None and delay <= 15) else 6.0
+                    logger.warning(
+                        f"Final review synthesis turn encountered transient rate limit / demand on '{model_name}': {gen_err}. "
+                        f"Backing off for {wait_sec:.1f}s to preserve gathered tool context and retry synthesis..."
+                    )
+                    time.sleep(wait_sec)
+                    continue
+
+                if final_response is None:
+                    raise gen_err
         return self._extract_response_text(final_response)
 
     def _review_batch(
@@ -592,8 +610,11 @@ class TommiReviewer:
         cooling_models.sort(key=lambda m: model_cooldowns[m])
 
         if preferred_model and preferred_model in available_models:
-            available_models.remove(preferred_model)
-            available_models.insert(0, preferred_model)
+            pref_idx = candidate_models.index(preferred_model) if preferred_model in candidate_models else 999
+            top_idx = candidate_models.index(available_models[0]) if available_models[0] in candidate_models else 999
+            if pref_idx <= top_idx:
+                available_models.remove(preferred_model)
+                available_models.insert(0, preferred_model)
 
         # If all models are cooling down, wait for the earliest one if within 45s
         if not available_models and cooling_models:
@@ -985,7 +1006,7 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 3. **Trust Compiler & Build Verification**: All PRs are verified to compile and build cleanly via Gradle prior to review. NEVER claim there are compilation errors, syntax errors, duplicate method/field definitions, or missing types that the Java compiler would reject. If you think a method is defined twice, you are misreading a method invocation (e.g. inside an `if` condition) or an overload. Do NOT flag compiler errors.
 4. **Verify Full Method Scope for Variables**: NEVER report a parameter or variable as unused unless you have traced the entire method body and confirmed it is completely unreferenced. Check event postings (`NeoForge.EVENT_BUS.post(...)`), constructor arguments, method calls, lambda closures, and return values before alleging an unused parameter.
 5. **Verify Full Class Scope for Methods & Fields**: Surrounding source code for all modified files is provided above in the 'MODIFIED FILES SURROUNDING SOURCE CODE' section. NEVER claim a method, field, helper, or override is unused, never called, or missing without checking the entire class. If a method is called by another method in the class, overrides an interface/parent method, acts as a factory, or listens to events (e.g. `@SubscribeEvent`), it is actively used.
-6. **Verify Method Return Types & Contracts Before Warning**: NEVER assume or guess that a method or context object returns a generic base class (e.g. assuming a method named `.level()` returns base `Level` rather than `ServerLevel`), returns `null`, or causes a `NullPointerException` on chained calls (e.g. `.level().getServer()`, `.get(key).foo()`) without verifying the actual method signature and contract from its class declaration. In particular, container, data attachment, and manager methods named `get(key)` frequently implement `getOrCreate` semantics (e.g. via `computeIfAbsent`) and never return null. If you cannot verify the contract or return type from the available code context or tools, do NOT assume it is nullable or a base type; assume the API contract is intentional, type-safe, and valid.
+6. **Verify Method Return Types & Contracts Before Warning**: NEVER assume or guess that a method or context object returns a generic base class (e.g. assuming a method named `.level()` returns base `Level` rather than `ServerLevel`), returns `null`, or causes a `NullPointerException` on chained calls (e.g. `.level().getServer()`, `.get(key).foo()`) without verifying the actual method signature and contract from its class declaration. In particular, container, data attachment, and manager methods named `get(key)` frequently implement `getOrCreate` semantics (e.g. via `computeIfAbsent`) and never return null. If you cannot verify the contract or return type from the available code context or tools, do NOT assume it is nullable or a base type; assume the API contract is intentional, type-safe, and valid. Do NOT post speculative NullPointerException warnings or type-mismatch warnings for method calls on objects whose return types or contracts are not declared in the diff or surrounding code.
 7. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
 8. **1-Click GitHub Suggestions & JSON Embedding**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block INSIDE the single "body" string:
    "body": "Explanation of the issue and why it needs fixing.\\n\\n```suggestion\\nexact replacement code\\n```"
@@ -1277,12 +1298,12 @@ Return ONLY a strict JSON array of objects, starting with '[' and ending with ']
 """
 
         models_to_try = []
-        if preferred_model:
-            models_to_try.append(preferred_model)
         if candidate_models:
             for m in candidate_models:
                 if m not in models_to_try:
                     models_to_try.append(m)
+        elif preferred_model:
+            models_to_try.append(preferred_model)
         if not models_to_try:
             models_to_try = ["gemini-2.5-flash"]
 

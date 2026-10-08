@@ -78,7 +78,7 @@ class TommiConfig:
         enable_secondary_validation_str = os.environ.get("ENABLE_SECONDARY_VALIDATION", "true").strip().lower()
         enable_secondary_validation = enable_secondary_validation_str in ("true", "1", "yes")
 
-        enable_tools_str = os.environ.get("ENABLE_TOOLS", "true").strip().lower()
+        enable_tools_str = os.environ.get("ENABLE_TOOLS", "false").strip().lower()
         enable_tools = enable_tools_str in ("true", "1", "yes")
 
         return cls(

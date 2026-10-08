@@ -93,8 +93,8 @@ class WorkspaceInspector:
         if total_lines == 0:
             return f"=== File: {file_path} (Empty file) ==="
 
-        # If file is within context threshold or no specific changed lines provided, return the whole file
-        if total_lines <= 1500 or not changed_lines:
+        # If file is small (<= 250 lines) or no specific changed lines provided, return the whole file
+        if total_lines <= 250 or not changed_lines:
             formatted = [f"{i:4d}: {line.rstrip()}" for i, line in enumerate(lines, start=1)]
             header = f"=== File: {file_path} (Lines 1-{total_lines} of {total_lines}) ==="
             return f"{header}\n" + "\n".join(formatted)
