@@ -1007,25 +1007,26 @@ Evaluate every file and changed line thoroughly across the entire diff. Prioriti
 4. **Verify Full Method Scope for Variables**: NEVER report a parameter or variable as unused unless you have traced the entire method body and confirmed it is completely unreferenced. Check event postings (`NeoForge.EVENT_BUS.post(...)`), constructor arguments, method calls, lambda closures, and return values before alleging an unused parameter.
 5. **Verify Full Class Scope for Methods & Fields**: Surrounding source code for all modified files is provided above in the 'MODIFIED FILES SURROUNDING SOURCE CODE' section. NEVER claim a method, field, helper, or override is unused, never called, or missing without checking the entire class. If a method is called by another method in the class, overrides an interface/parent method, acts as a factory, or listens to events (e.g. `@SubscribeEvent`), it is actively used.
 6. **Verify Method Return Types & Contracts Before Warning**: NEVER assume or guess that a method or context object returns a generic base class (e.g. assuming a method named `.level()` returns base `Level` rather than `ServerLevel`), returns `null`, or causes a `NullPointerException` on chained calls (e.g. `.level().getServer()`, `.get(key).foo()`) without verifying the actual method signature and contract from its class declaration. In particular, container, data attachment, and manager methods named `get(key)` frequently implement `getOrCreate` semantics (e.g. via `computeIfAbsent`) and never return null. If you cannot verify the contract or return type from the available code context or tools, do NOT assume it is nullable or a base type; assume the API contract is intentional, type-safe, and valid. Do NOT post speculative NullPointerException warnings or type-mismatch warnings for method calls on objects whose return types or contracts are not declared in the diff or surrounding code.
-7. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
-8. **1-Click GitHub Suggestions & JSON Embedding**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block INSIDE the single "body" string:
+7. **Verify Control Flow & Mutual Exclusivity Before Suggesting Variable Extraction**: NEVER recommend extracting an accessor or method call (e.g. `getDirectSlots()`, `getMainHandItem()`) into a local variable unless multiple calls actually execute sequentially within the same execution path. Trace control flow carefully: if calls are separated by early returns (e.g. `return false;`, `return true;`), breaks, or reside in separate `if`/`else` branches, at most one call can ever execute per invocation. Extracting a shared variable across mutually exclusive branches saves zero calls, wastes allocations, and forces eager initialization. Do NOT flag mutually exclusive calls as repeated or redundant.
+8. Be concise, direct, and instructional in your comments. Point out what is wrong and exactly how to fix it according to your rules.
+9. **1-Click GitHub Suggestions & JSON Embedding**: When suggesting an exact code replacement for a specific line, format the replacement inside a GitHub markdown suggestion block INSIDE the single "body" string:
    "body": "Explanation of the issue and why it needs fixing.\\n\\n```suggestion\\nexact replacement code\\n```"
    CRITICAL JSON SYNTAX RULE: The entire review comment (including any ```suggestion ... ``` markdown code block) MUST be enclosed within the single "body" string. NEVER output ```suggestion as a JSON property key, and NEVER put a colon or quotes like ```suggestion": " or ```suggestion: ".
-9. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
+10. **Self-Dismissal Protocol ("Changed Mind / No Issue")**:
    If while drafting a comment you realize there is actually no genuine issue (e.g. you notice parameter shadowing, intentional fallback, or that a rule does not apply):
    - Conclude the comment body with `[DISMISSED]` (e.g., `...So this is mandatory! [DISMISSED]`), or set `"actionable": false`.
    - The review engine will automatically recognize that you changed your mind and will discard the comment so it does not pollute the review!
    - If all candidate issues turn out to be non-issues, return an empty array `[]`.
-10. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
-11. Each object must have:
+11. Return your comments as a strict JSON array of objects, ordered from highest priority/severity to lowest priority/severity (`CRITICAL` first, then `WARNING`, then `SUGGESTION`).
+12. Each object must have:
    - `path`: The exact relative file path of the file being reviewed (matching the `b/` path in diff).
    - `line`: The exact line number in the NEW version of the file (RIGHT side of diff) where the issue occurs. **CRITICAL**: Read the line number directly from the line prefix in the annotated diff (e.g. `  189: + ...` or `  190:   ...`). Do NOT count or estimate line numbers.
    - `target_code`: The exact line or distinctive snippet of code from the diff that this comment targets.
    - `severity`: One of `"CRITICAL"`, `"WARNING"`, or `"SUGGESTION"`.
    - `body`: Your review comment (or conclude with `[DISMISSED]` if you changed your mind).
    - `actionable`: Boolean (`true` by default, or `false` if dismissed as a non-issue).
-12. If there are no issues found, return an empty array `[]`.
-13. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
+13. If there are no issues found, return an empty array `[]`.
+14. Return ONLY the raw JSON array starting with '[' and ending with ']'. Do NOT include conversational preamble, explanations, or markdown discussion outside the JSON.
 """
 
     def _align_suggestion_indentation(self, body: str, path: str, line: int, parsed_diff: ParsedDiff) -> str:
@@ -1288,6 +1289,7 @@ For every draft comment, evaluate:
 3. Factual Accuracy: Does the code context actually support the comment's claims?
 4. Genuine Actionability: Is this a genuine defect or concrete improvement? Reject pedantic nitpicks, invalid advice, or non-actionable observations.
 5. Verified Return Types & Nullability: Did the reviewer guess or assume the return type or nullability contract of a method, getter, or context object (such as assuming `.level()` returns base `Level` rather than `ServerLevel`, or assuming a `get(...)` method returns null rather than acting as `getOrCreate`)? If the return type and nullability contract are not explicitly verified in the provided code context, REJECT the comment (`keep: false`). Speculative NullPointerException or side-safety warnings based on unverified method contracts or return types are strictly forbidden.
+6. Control Flow & Mutually Exclusive Branches: Did the draft comment claim a method or accessor is called repeatedly or redundantly, or recommend extracting it into a local variable, when the calls reside in mutually exclusive branches (e.g. separated by an early `return`, `break`, or in separate `if`/`else` paths)? If at most one call can ever execute at runtime, REJECT the comment (`keep: false`).
 
 For each comment, output a decision object:
 - "index": The index of the draft comment (0, 1, 2, ...).
@@ -1309,14 +1311,38 @@ Return ONLY a strict JSON array of objects, starting with '[' and ending with ']
 
         raw_verdicts = None
         for model in models_to_try:
-            try:
-                raw_json = self._execute_review_generation(model, audit_prompt, enable_tools=False)
-                raw_verdicts = self._parse_and_repair_json(raw_json)
-                if isinstance(raw_verdicts, list):
+            max_attempts = 2
+            for attempt in range(max_attempts):
+                try:
+                    raw_json = self._execute_review_generation(model, audit_prompt, enable_tools=False)
+                    raw_verdicts = self._parse_and_repair_json(raw_json)
+                    if isinstance(raw_verdicts, list):
+                        break
+                except Exception as e:
+                    error_str = str(e).lower()
+                    is_transient = (
+                        "503" in error_str
+                        or "high demand" in error_str
+                        or "unavailable" in error_str
+                        or "overloaded" in error_str
+                        or "429" in error_str
+                        or "quota" in error_str
+                        or "exhausted" in error_str
+                        or "resourceexhausted" in error_str
+                    )
+                    if is_transient and attempt < max_attempts - 1:
+                        retry_delay = extract_retry_delay(e)
+                        backoff = (retry_delay + 1) if (retry_delay is not None and retry_delay <= 15) else 5.0
+                        logger.warning(
+                            f"Secondary verification pass on '{model}' encountered transient demand/rate limit: {e}. "
+                            f"Backing off for {backoff:.1f}s before retrying..."
+                        )
+                        time.sleep(backoff)
+                        continue
+                    logger.warning(f"Secondary verification pass failed with model '{model}': {e}")
                     break
-            except Exception as e:
-                logger.warning(f"Secondary verification pass failed with model '{model}': {e}")
-                continue
+            if isinstance(raw_verdicts, list):
+                break
 
         if not isinstance(raw_verdicts, list):
             logger.warning("Secondary verification pass did not produce a valid verdict list; keeping candidate comments.")

@@ -1741,6 +1741,78 @@ class TestFetchPrDiffFallback(unittest.TestCase):
 
         self.assertEqual(len(comments), 0)
 
+    def test_secondary_validation_filters_mutually_exclusive_calls_hallucination(self):
+        config = TommiConfig(
+            github_token="fake",
+            gemini_api_key="fake",
+            github_repository="owner/repo",
+            pr_number=1,
+            enable_secondary_validation=True,
+        )
+        reviewer = TommiReviewer(config)
+        diff = "diff --git a/src/Holder.java b/src/Holder.java\n@@ -1,10 +1,10 @@\n+if (!stack.isStackable()) {\n+    for (BoundInventorySlot slot : getDirectSlots()) return true;\n+    return false;\n+}\n+for (BoundInventorySlot slot : getDirectSlots()) {\n"
+
+        primary_comments = [
+            {
+                "path": "src/Holder.java",
+                "line": 5,
+                "body": "Calling getDirectSlots() repeatedly triggers redundant allocations. Extract getDirectSlots() into a local variable.",
+                "severity": "WARNING",
+            }
+        ]
+        audit_verdicts = [
+            {
+                "index": 0,
+                "keep": False,
+                "reason": "getDirectSlots() is called in mutually exclusive branches separated by an early return; only one call can ever execute per invocation. Speculative redundant call warning rejected.",
+            }
+        ]
+
+        with patch.object(reviewer, "_execute_review_generation", side_effect=[
+            json.dumps(primary_comments),
+            json.dumps(audit_verdicts),
+        ]), patch("src.reviewer.resolve_candidate_models", return_value=["gemini-2.5-flash"]):
+            comments = reviewer.review_diff(diff)
+
+        self.assertEqual(len(comments), 0)
+
+    def test_secondary_validation_retries_transient_503_error(self):
+        config = TommiConfig(
+            github_token="fake",
+            gemini_api_key="fake",
+            github_repository="owner/repo",
+            pr_number=1,
+            enable_secondary_validation=True,
+        )
+        reviewer = TommiReviewer(config)
+        diff = "diff --git a/src/Test.java b/src/Test.java\n@@ -1,2 +1,2 @@\n+int x = 1;\n"
+
+        primary_comments = [
+            {
+                "path": "src/Test.java",
+                "line": 1,
+                "body": "Valid critical bug",
+                "severity": "CRITICAL",
+            }
+        ]
+        audit_verdicts = [
+            {
+                "index": 0,
+                "keep": True,
+                "reason": "Legitimate bug",
+            }
+        ]
+
+        with patch.object(reviewer, "_execute_review_generation", side_effect=[
+            json.dumps(primary_comments),
+            Exception("503 UNAVAILABLE: This model is currently experiencing high demand."),
+            json.dumps(audit_verdicts),
+        ]), patch("src.reviewer.resolve_candidate_models", return_value=["gemini-2.5-flash"]), patch("src.reviewer.time.sleep"):
+            comments = reviewer.review_diff(diff)
+
+        self.assertEqual(len(comments), 1)
+        self.assertEqual(comments[0]["body"], "Valid critical bug")
+
     def test_parse_and_repair_json_malformed_suggestion_key(self):
         """
         Verifies that when a model outputs malformed GitHub suggestions treating
