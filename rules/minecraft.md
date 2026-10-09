@@ -21,6 +21,7 @@
 * **Item & Inventory Searches**: Do NOT flag entity or block-entity inventory scans as redundant or suggest early loop termination (`break`, `return`, or `if (!found)` guards); item stacks with matching IDs or data components can be split, duplicated, or distributed across multiple inventories and entities.
 
 * **ItemStack Equality & Collections**: Do NOT flag `ObjectOpenHashSet<ItemStack>` or `ReferenceOpenHashSet<ItemStack>` as using flawed equality checks; in Minecraft 1.21+, `ItemStack` does not override `equals()` or `hashCode()`, so sets compare `ItemStack` instances by identity.
+* **Visited Stack Tracking in Inventory/Container Recursion**: Do NOT flag `ReferenceOpenHashSet<ItemStack>` or identity-based sets when used to track visited `ItemStack` instances during recursive or nested inventory/container traversal; object identity (`==`) is required to inspect every distinct stack instance in an inventory without skipping identical items contained within separate bundles or containers.
 * **Registry Singletons vs. Holders in FastUtil Collections**:
   * For collections of direct registry singletons (`Item`, `Block`, `MobEffect`, `EntityType`), `ReferenceOpenHashSet` / `Reference2ObjectOpenHashMap` is preferred for maximum performance.
   * For collections of holders or keys (`ExtendedHolder`, `Holder`, `ResourceKey`), `ObjectOpenHashSet` MUST be used because holders/keys rely on value equality (`equals()` / `hashCode()`).
@@ -92,4 +93,3 @@
 * **Side-Effectful Method Calls & Cache Checks**: Do NOT flag `containsKey` or presence checks followed by method calls (e.g., `getBakedModel`) as duplicate lookups when the called method performs essential side effects, initialization, or fallback logic that direct map retrieval (`get()`) bypasses.
 * **Return Types**: ALWAYS verify what methods return instead of assuming (for example, a `level()` method could return a ServerLevel instead of a Level, so it has certain non-nullability of the server).
 * **Extensible Event & Strategy Pipelines over Hardcoded Calls**: When implementing cross-cutting transformations, state calculations, or formatters (e.g., entity display names, stat scaling, identity overrides), NEVER hardcode a series of domain-specific checks or utility calls directly into core mixins, consumer loops, or vanilla class overrides. ALWAYS dispatch through a dedicated NeoForge modifiable event (e.g., `EntityDisplayNameFormatEvent`) or an extensible strategy pattern, keeping core injection points minimal and allowing addons and modules to cleanly extend and customize behavior.
-
